@@ -24,4 +24,15 @@ export function renderGoogleButton({ containerId, clientId, callback }) {
 	});
 }
 
+// Firebase Auth based Google sign-in that returns a Firebase ID token
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { auth } from './config';
+
+export async function signInWithGoogleAndGetIdToken() {
+	const provider = new GoogleAuthProvider();
+	const result = await signInWithPopup(auth, provider);
+	const idToken = await result.user.getIdToken();
+	return idToken;
+}
+
 

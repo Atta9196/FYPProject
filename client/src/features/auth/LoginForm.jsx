@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { loadGooglePlatformScript, renderGoogleButton } from '../../services/firebase/googleAuth';
+import { loadGooglePlatformScript, renderGoogleButton, signInWithGoogleAndGetIdToken } from '../../services/firebase/googleAuth';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -11,6 +11,7 @@ export default function LoginForm() {
     const [form, setForm] = useState({ email: '', password: '' });
     const [error, setError] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
 
 	function handleChange(e) {
 		setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -36,9 +37,10 @@ export default function LoginForm() {
 			renderGoogleButton({
 				containerId: 'google-btn',
 				clientId: GOOGLE_CLIENT_ID,
-				callback: async (response) => {
+				callback: async () => {
 					try {
-						await loginWithGoogle(response.credential);
+						const idToken = await signInWithGoogleAndGetIdToken();
+						await loginWithGoogle(idToken);
 						navigate('/dashboard');
 					} catch (e) {
 						setError(e.message || 'Google sign-in failed');
@@ -49,13 +51,18 @@ export default function LoginForm() {
 	}, []);
 
     function ForgotPasswordLink() {
+        const [open, setOpen] = useState(false);
+        const [email, setEmail] = useState('');
         const [sending, setSending] = useState(false);
         const [msg, setMsg] = useState('');
-        async function onClick() {
+        async function submitReset(e) {
+            e.preventDefault();
             setMsg('');
             setSending(true);
             try {
-                await forgotPassword(form.email.trim());
+                const targetEmail = (email || form.email).trim();
+                if (!targetEmail) throw new Error('Email is required');
+                await forgotPassword(targetEmail);
                 setMsg('Password reset email sent.');
             } catch (e) {
                 setMsg(e.message || 'Could not send reset email');
@@ -64,11 +71,32 @@ export default function LoginForm() {
             }
         }
         return (
-            <div className="text-right">
-                <button type="button" onClick={onClick} className="text-sm text-blue-600 hover:underline" disabled={sending || !form.email}>
-                    {sending ? 'Sending…' : 'Forgot password?'}
-                </button>
-                {msg && <p className="text-xs text-gray-500 mt-1">{msg}</p>}
+            <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                    <button type="button" onClick={() => setOpen((v) => !v)} className="text-sm text-blue-600 hover:underline">
+                        {open ? 'Hide reset form' : 'Forgot password?'}
+                    </button>
+                    {msg && <p className="text-xs text-gray-500">{msg}</p>}
+                </div>
+                {open && (
+                    <form onSubmit={submitReset} className="grid grid-cols-1 gap-2 p-3 border rounded-lg bg-gray-50">
+                        <label className="text-xs text-gray-600">Email for reset link</label>
+                        <input
+                            type="email"
+                            placeholder="you@example.com"
+                            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                        />
+                        <button
+                            type="submit"
+                            disabled={sending}
+                            className="justify-self-end px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-60"
+                        >
+                            {sending ? 'Sending…' : 'Send reset link'}
+                        </button>
+                    </form>
+                )}
             </div>
         );
     }
@@ -87,7 +115,29 @@ export default function LoginForm() {
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                    <input type="password" name="password" placeholder="••••••••" className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={form.password} onChange={handleChange} required />
+                    <div className="relative">
+                        <input
+                            type={showPassword ? 'text' : 'password'}
+                            name="password"
+                            placeholder="••••••••"
+                            className="w-full p-3 pr-12 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            value={form.password}
+                            onChange={handleChange}
+                            required
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowPassword((v) => !v)}
+                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                            className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500 hover:text-gray-700"
+                        >
+                            {showPassword ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M3.94 4.94a1.5 1.5 0 012.12 0l9 9a1.5 1.5 0 11-2.12 2.12l-1.7-1.7A8.8 8.8 0 0110 15.5C5.5 15.5 2.17 12.6 1 10c.44-.98 1.3-2.15 2.57-3.24l.37-.32z"/><path d="M13.94 11.82l-1.94-1.94a3 3 0 01-4.24-4.24l-1.3-1.3A8.86 8.86 0 0110 4.5c4.5 0 7.83 2.9 9 5.5-.38.84-1.08 1.87-2.06 2.82-.7.68-1.53 1.28-2.53 1.73l-.47-.73z"/></svg>
+                            ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 4.5c4.5 0 7.83 2.9 9 5.5-1.17 2.6-4.5 5.5-9 5.5S2.17 12.6 1 10c1.17-2.6 4.5-5.5 9-5.5zm0 2a3.5 3.5 0 100 7 3.5 3.5 0 000-7z"/></svg>
+                            )}
+                        </button>
+                    </div>
                 </div>
                 <ForgotPasswordLink />
                 <button type="submit" disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 transition text-white py-3 rounded-lg font-medium disabled:opacity-60">
@@ -103,9 +153,13 @@ export default function LoginForm() {
                 <button
                     type="button"
                     onClick={() => {
-                        if (window.google && window.google.accounts && window.google.accounts.id) {
-                            window.google.accounts.id.prompt();
-                        }
+                        // Use Firebase popup directly; no dependency on Google Identity script
+                        signInWithGoogleAndGetIdToken()
+                            .then(async (idToken) => {
+                                await loginWithGoogle(idToken);
+                                navigate('/dashboard');
+                            })
+                            .catch((e) => setError(e.message || 'Google sign-in failed'));
                     }}
                     className="flex items-center justify-center w-full px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
@@ -119,6 +173,9 @@ export default function LoginForm() {
                 </button>
             </div>
             <div id="google-btn" className="hidden" />
+            <div className="mt-6 text-center text-xs text-gray-500">
+                <p>If you signed up with Google, you can also set a password via "Forgot password" to log in with email next time.</p>
+            </div>
         </div>
     );
 }

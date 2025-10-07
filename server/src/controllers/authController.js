@@ -1,4 +1,5 @@
 const { registerUser, loginUser, verifyGoogleIdToken, sendPasswordReset } = require('../services/authService');
+const jwt = require('jsonwebtoken');
 
 async function handleRegister(req, res) {
 	try {
@@ -34,11 +35,24 @@ async function handleGoogle(req, res) {
 		if (!idToken) {
 			return res.status(400).json({ message: 'idToken is required' });
 		}
+        // Basic debug to help identify token and environment issues
+        console.log('[GoogleAuth] Received idToken length:', typeof idToken === 'string' ? idToken.length : 'n/a');
+        console.log('[GoogleAuth] Firebase project (server):', process.env.FIREBASE_PROJECT_ID || '<missing>');
+        try {
+            const decoded = jwt.decode(idToken, { complete: true });
+            const payload = decoded && decoded.payload ? decoded.payload : {};
+            console.log('[GoogleAuth] Token iss:', payload.iss || '<none>');
+            console.log('[GoogleAuth] Token aud:', payload.aud || '<none>');
+            console.log('[GoogleAuth] Token sub(uid):', payload.sub || '<none>');
+        } catch (e) {
+            console.log('[GoogleAuth] Failed to decode token before verify');
+        }
 		const result = await verifyGoogleIdToken({ idToken });
 		return res.status(200).json(result);
 	} catch (err) {
-		const status = err.status || 401;
-		return res.status(status).json({ message: err.message || 'Google auth failed' });
+        const status = err.status || 401;
+        console.error('[GoogleAuth] Verification failed:', err && err.message ? err.message : err);
+        return res.status(status).json({ message: err.message || 'Google auth failed' });
 	}
 }
 
