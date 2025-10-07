@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "firebase": "^12.3.0",
+    "lucide-react": "^0.545.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.9.1"
+    "react-router-dom": "^7.9.1",
+    "recharts": "^3.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",

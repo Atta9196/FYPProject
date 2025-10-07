@@ -94,7 +94,7 @@ export default function LoginForm() {
                             className="justify-self-end px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-60"
                         >
                             {sending ? 'Sending…' : 'Send reset link'}
-                        </button>
+                </button>
                     </form>
                 )}
             </div>
@@ -102,9 +102,9 @@ export default function LoginForm() {
     }
 
     return (
-        <div className="max-w-md w-full bg-white/80 backdrop-blur border border-gray-100 shadow-xl rounded-2xl p-8">
+        <div className="max-w-md w-full bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_12px_40px_rgba(2,6,23,0.12)] rounded-3xl p-8 animate-fade-in">
             <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold tracking-tight text-gray-900">Welcome back</h2>
+                <h2 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">Welcome back</h2>
                 <p className="text-gray-500 text-sm">Sign in to continue your IELTS journey</p>
             </div>
             {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
@@ -140,7 +140,7 @@ export default function LoginForm() {
                     </div>
                 </div>
                 <ForgotPasswordLink />
-                <button type="submit" disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 transition text-white py-3 rounded-lg font-medium disabled:opacity-60">
+                <button type="submit" disabled={submitting} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition text-white py-3 rounded-xl font-medium disabled:opacity-60 shadow hover:shadow-lg">
                     {submitting ? 'Signing in...' : 'Sign in'}
                 </button>
             </form>
@@ -161,7 +161,7 @@ export default function LoginForm() {
                             })
                             .catch((e) => setError(e.message || 'Google sign-in failed'));
                     }}
-                    className="flex items-center justify-center w-full px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    className="flex items-center justify-center w-full px-4 py-3 border border-slate-200 rounded-xl hover:bg-white transition-colors shadow-sm"
                 >
                     <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -175,6 +175,16 @@ export default function LoginForm() {
             <div id="google-btn" className="hidden" />
             <div className="mt-6 text-center text-xs text-gray-500">
                 <p>If you signed up with Google, you can also set a password via "Forgot password" to log in with email next time.</p>
+            </div>
+            <div className="mt-4 text-center text-sm text-slate-600">
+                Don't have an account?{' '}
+                <button
+                    type="button"
+                    onClick={() => navigate('/register')}
+                    className="text-blue-600 hover:underline"
+                >
+                    Sign up
+                </button>
             </div>
         </div>
     );

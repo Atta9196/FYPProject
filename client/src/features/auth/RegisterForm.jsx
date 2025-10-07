@@ -46,13 +46,28 @@ export default function RegisterForm() {
 		}
 	}
 
-    return (
-        <div className="max-w-md w-full bg-white/80 backdrop-blur border border-gray-100 shadow-xl rounded-2xl p-8">
+    return (<>
+        <div className="max-w-md w-full bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_12px_40px_rgba(2,6,23,0.12)] rounded-3xl p-8 animate-fade-in">
             <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold tracking-tight text-gray-900">Create your account</h2>
+                <h2 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">Create your account</h2>
                 <p className="text-gray-500 text-sm">Start your IELTS preparation today</p>
             </div>
-            {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+            {error && (
+                <div className="text-sm mb-2">
+                    <p className={/already registered/i.test(error) ? 'text-amber-700' : 'text-red-600'}>{error}</p>
+                    {/already registered/i.test(error) && (
+                        <div className="mt-2">
+                            <button
+                                type="button"
+                                onClick={() => navigate('/login')}
+                                className="text-blue-600 hover:underline"
+                            >
+                                Sign in
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
             <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">First name</label>
@@ -118,7 +133,7 @@ export default function RegisterForm() {
                         </button>
                     </div>
                 </div>
-                <button type="submit" disabled={submitting} className="w-full bg-blue-600 hover:bg-blue-700 transition text-white py-3 rounded-lg font-medium disabled:opacity-60">
+                <button type="submit" disabled={submitting} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition text-white py-3 rounded-xl font-medium disabled:opacity-60 shadow hover:shadow-lg">
                     {submitting ? 'Creating account...' : 'Create account'}
                 </button>
             </form>
@@ -150,8 +165,18 @@ export default function RegisterForm() {
                     Continue with Google
                 </button>
             </div>
+            <div className="mt-6 text-center text-sm text-slate-600">
+                Already have an account?{' '}
+                <button
+                    type="button"
+                    onClick={() => navigate('/login')}
+                    className="text-blue-600 hover:underline"
+                >
+                    Sign in
+                </button>
+            </div>
         </div>
-    );
+    </>);
 }
 
 

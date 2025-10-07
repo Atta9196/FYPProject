@@ -10,6 +10,10 @@ async function handleRegister(req, res) {
 		const result = await registerUser({ firstName, lastName, email, password });
 		return res.status(201).json(result);
 	} catch (err) {
+		// Normalize duplicate email error from Firebase Admin
+		if (err && (err.code === 'auth/email-already-exists' || /already exists/i.test(err.message || ''))) {
+			return res.status(409).json({ message: 'Email already registered. Please sign in.' });
+		}
 		const status = err.status || 500;
 		return res.status(status).json({ message: err.message || 'Registration failed' });
 	}
