@@ -30,20 +30,29 @@ export default function LandingPage() {
                 </nav>
 
           <div className="flex items-center gap-3">
-            {!user && (
+            {!user ? (
+              <>
+                <Link
+                  to="/login"
+                  className="px-4 py-2 rounded-md border-2 border-blue-600 text-blue-600 font-semibold hover:bg-blue-50 transition-all"
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/register"
+                  className="group px-5 py-2.5 rounded-md text-white font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition-all shadow-md"
+                >
+                  <span className="inline-block group-hover:translate-x-1 transition-transform">Register</span>
+                </Link>
+              </>
+            ) : (
               <Link
-                to="/login"
-                className="px-4 py-2 rounded-md border-2 border-blue-600 text-blue-600 font-semibold hover:bg-blue-50 transition-all"
+                to="/dashboard"
+                className="group px-5 py-2.5 rounded-md text-white font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition-all shadow-md"
               >
-                Login
+                <span className="inline-block group-hover:translate-x-1 transition-transform">Go to Dashboard</span>
               </Link>
             )}
-            <Link
-              to={getStartedTo}
-              className="group px-5 py-2.5 rounded-md text-white font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition-all shadow-md"
-            >
-              <span className="inline-block group-hover:translate-x-1 transition-transform">Register</span>
-            </Link>
           </div>
         </div>
             </header>
