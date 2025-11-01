@@ -63,13 +63,13 @@ const upload = multer({
 
 /**
  * GET /api/speaking/question
- * Generate a random IELTS Speaking Part 2 question using OpenAI or fallback
+ * Generate a dynamic IELTS Speaking Part 2 question using OpenAI with enhanced variety
  */
 router.get("/question", async (req, res) => {
   try {
-    console.log("🎯 Generating IELTS Speaking Part 2 question...");
+    console.log("🎯 Generating dynamic IELTS Speaking Part 2 question...");
     
-    // Fallback questions if OpenAI API fails
+    // Enhanced fallback questions with more variety
     const fallbackQuestions = [
       {
         question: "Describe a memorable journey you have taken. You should say where you went, how you traveled, what you saw and did, and explain why it was memorable.",
@@ -110,11 +110,42 @@ router.get("/question", async (req, res) => {
       {
         question: "Describe a festival or celebration in your country. You should say when it is celebrated, what people do, and explain why it is important to you.",
         topic: "culture and traditions"
+      },
+      {
+        question: "Talk about a difficult decision you had to make. You should say what the decision was, what options you considered, and explain how you made your choice.",
+        topic: "personal experiences"
+      },
+      {
+        question: "Describe a piece of art or music that you like. You should say what it is, where you first saw or heard it, and explain why you like it.",
+        topic: "arts and culture"
+      },
+      {
+        question: "Talk about a time when you had to work in a team. You should say what the task was, who you worked with, and explain how well the team worked together.",
+        topic: "work and career"
+      },
+      {
+        question: "Describe a place where you like to spend time outdoors. You should say where it is, what you do there, and explain why you enjoy spending time there.",
+        topic: "environment and nature"
+      },
+      {
+        question: "Talk about a goal you have achieved. You should say what the goal was, how you achieved it, and explain how you felt when you reached it.",
+        topic: "personal achievements"
       }
     ];
     
-    // Try OpenAI first, fallback to predefined questions
+    // Try OpenAI first with enhanced prompt for more variety
     try {
+      const questionTypes = [
+        "personal experience",
+        "future plans", 
+        "past event",
+        "hypothetical situation",
+        "comparison",
+        "problem-solving",
+        "opinion-based",
+        "descriptive"
+      ];
+      
       const topics = [
         "education and learning",
         "travel and tourism", 
@@ -125,49 +156,67 @@ router.get("/question", async (req, res) => {
         "health and lifestyle",
         "entertainment and media",
         "family and relationships",
-        "sports and recreation"
+        "sports and recreation",
+        "arts and culture",
+        "personal achievements",
+        "social issues",
+        "food and cooking",
+        "fashion and style"
       ];
       
       const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+      const randomType = questionTypes[Math.floor(Math.random() * questionTypes.length)];
       
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: "You are an IELTS Speaking examiner. Generate a realistic IELTS Speaking Part 2 question. The question should follow the standard IELTS format with a main topic and specific points to cover. Return ONLY the question text, no additional formatting."
+            content: `You are an IELTS Speaking examiner creating Part 2 questions. Generate a realistic, engaging IELTS Speaking Part 2 question that follows the standard format. 
+
+Requirements:
+- Use the topic: ${randomTopic}
+- Question type: ${randomType}
+- Include specific points the candidate should cover
+- Make it interesting and thought-provoking
+- Ensure it's appropriate for IELTS level (B1-C2)
+- Return ONLY the question text, no additional formatting or explanations
+
+The question should be unique and not repetitive. Make it feel fresh and engaging.`
           },
           {
             role: "user",
-            content: `Generate an IELTS Speaking Part 2 question about ${randomTopic}. The question should include specific points the candidate should cover in their response.`
+            content: `Create a dynamic IELTS Speaking Part 2 question about ${randomTopic} with a ${randomType} focus. Make it engaging and original.`
           }
         ],
-        max_tokens: 250,
-        temperature: 0.8
+        max_tokens: 300,
+        temperature: 0.9 // Higher temperature for more creativity
       });
 
       const question = completion.choices[0].message.content.trim();
       
-      console.log("✅ Generated AI question:", question);
+      console.log("✅ Generated dynamic AI question:", question);
       
       res.json({ 
         question: question,
         topic: randomTopic,
+        type: randomType,
         success: true 
       });
       
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed, using fallback questions:", openaiError.message);
+      console.log("⚠️ OpenAI API failed, using enhanced fallback questions:", openaiError.message);
       
-      // Use fallback questions
+      // Use enhanced fallback questions
       const randomIndex = Math.floor(Math.random() * fallbackQuestions.length);
       const selectedQuestion = fallbackQuestions[randomIndex];
       
-      console.log("✅ Using fallback question:", selectedQuestion.question);
+      console.log("✅ Using enhanced fallback question:", selectedQuestion.question);
       
       res.json({ 
         question: selectedQuestion.question,
         topic: selectedQuestion.topic,
+        type: "fallback",
         success: true 
       });
     }
@@ -359,49 +408,65 @@ Be specific about strengths and areas for improvement.`
 
 /**
  * POST /api/speaking/realtime/start
- * Start a real-time conversation session
+ * Start a dynamic real-time conversation session with enhanced AI interaction
  */
 router.post("/realtime/start", async (req, res) => {
   try {
-    console.log("🎙️ Starting real-time conversation session...");
+    console.log("🎙️ Starting dynamic real-time conversation session...");
     
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    // Fallback initial messages if OpenAI fails
+    // Enhanced fallback messages with more variety
     const fallbackMessages = [
       "Hello! Welcome to your IELTS speaking practice session. I'm your examiner today. Let's start with something simple - could you tell me a little bit about yourself? What do you do for work or study?",
       "Good to meet you! I'm here to help you practice for your IELTS speaking test. To begin, could you tell me about your hometown? What's it like living there?",
       "Welcome! I'm excited to practice with you today. Let's start with an easy question - what do you like to do in your free time? Do you have any hobbies or interests?",
       "Hello there! I'm your IELTS examiner for today's practice session. Let's begin with a simple question - could you describe your typical day? What do you usually do from morning to evening?",
-      "Hi! Great to have you here for some IELTS speaking practice. Let's start with something personal - could you tell me about a place you've visited recently? What did you like about it?"
+      "Hi! Great to have you here for some IELTS speaking practice. Let's start with something personal - could you tell me about a place you've visited recently? What did you like about it?",
+      "Welcome! I'm looking forward to our practice session today. Let's start with a warm-up question - what's your favorite type of music or movie? Why do you enjoy it?",
+      "Hello! I'm your IELTS examiner. Let's begin our practice session. Could you tell me about a skill you've learned recently? How did you go about learning it?",
+      "Good to see you! Let's start our IELTS speaking practice. I'd like to know - what's something you're looking forward to in the near future? Why is it important to you?"
     ];
     
     try {
-      // Try OpenAI first
+      // Try OpenAI first with enhanced prompt for more dynamic conversation
+      const conversationStyles = [
+        "warm and encouraging",
+        "professional and focused", 
+        "casual and friendly",
+        "enthusiastic and supportive",
+        "calm and reassuring"
+      ];
+      
+      const randomStyle = conversationStyles[Math.floor(Math.random() * conversationStyles.length)];
+      
       const initialMessage = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `You are a friendly IELTS Speaking examiner conducting a real-time practice session. 
-            
-            Your role:
-            - Be encouraging and supportive
-            - Ask follow-up questions naturally
-            - Provide gentle feedback when appropriate
-            - Keep the conversation flowing like a real IELTS interview
-            - Focus on Part 1 and Part 3 style questions
-            - Be conversational, not robotic
-            
-            Start with a warm greeting and ask about the candidate's background or interests.`
+            content: `You are a professional IELTS Speaking examiner conducting a real-time practice session. 
+
+Your personality: Be ${randomStyle}
+
+Your role:
+- Create a natural, engaging conversation flow
+- Ask follow-up questions that build on responses
+- Provide gentle feedback when appropriate
+- Mix Part 1 and Part 3 style questions naturally
+- Be conversational and human-like, not robotic
+- Show genuine interest in the candidate's responses
+- Adapt your questions based on their interests and background
+
+Start with a warm, personalized greeting and ask an opening question that will help you understand the candidate better. Make it feel like a real IELTS interview.`
           },
           {
             role: "user",
-            content: "Please start the IELTS speaking practice session."
+            content: "Please start the IELTS speaking practice session with a dynamic, engaging opening."
           }
         ],
-        max_tokens: 200,
-        temperature: 0.7
+        max_tokens: 250,
+        temperature: 0.8 // Higher temperature for more natural variation
       });
 
       const examinerMessage = initialMessage.choices[0].message.content.trim();
@@ -409,19 +474,21 @@ router.post("/realtime/start", async (req, res) => {
       res.json({
         sessionId: sessionId,
         message: examinerMessage,
+        style: randomStyle,
         success: true
       });
       
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for real-time start, using fallback:", openaiError.message);
+      console.log("⚠️ OpenAI API failed for real-time start, using enhanced fallback:", openaiError.message);
       
-      // Use fallback message
+      // Use enhanced fallback message
       const randomIndex = Math.floor(Math.random() * fallbackMessages.length);
       const fallbackMessage = fallbackMessages[randomIndex];
       
       res.json({
         sessionId: sessionId,
         message: fallbackMessage,
+        style: "fallback",
         success: true
       });
     }
@@ -438,36 +505,87 @@ router.post("/realtime/start", async (req, res) => {
 
 /**
  * POST /api/speaking/realtime/continue
- * Continue the real-time conversation
+ * Continue the dynamic real-time conversation with enhanced AI interaction
  */
 router.post("/realtime/continue", async (req, res) => {
   try {
     const { sessionId, userMessage, conversationHistory = [] } = req.body;
     
-    console.log("💬 Continuing real-time conversation...");
+    console.log("💬 Continuing dynamic real-time conversation...");
     
-    // Fallback responses for common user inputs
-    const getFallbackResponse = (userMessage) => {
+    // Enhanced fallback responses with more variety and context awareness
+    const getFallbackResponse = (userMessage, conversationHistory) => {
       const lowerMessage = userMessage.toLowerCase();
+      const recentTopics = conversationHistory.slice(-4).map(msg => msg.content.toLowerCase()).join(' ');
       
+      // Context-aware responses
       if (lowerMessage.includes('work') || lowerMessage.includes('job') || lowerMessage.includes('career')) {
-        return "That's interesting! Tell me more about your work. What do you enjoy most about your job?";
+        const responses = [
+          "That's interesting! Tell me more about your work. What do you enjoy most about your job?",
+          "How fascinating! What's the most challenging aspect of your work?",
+          "That sounds rewarding! How did you get into that field?",
+          "Great! What skills do you think are most important for your job?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('study') || lowerMessage.includes('school') || lowerMessage.includes('university')) {
-        return "Great! What are you studying? What do you like about your course?";
+        const responses = [
+          "Great! What are you studying? What do you like about your course?",
+          "That's wonderful! What's the most interesting thing you've learned recently?",
+          "How exciting! What do you plan to do after you finish your studies?",
+          "That sounds challenging! What's your favorite subject?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('hobby') || lowerMessage.includes('interest') || lowerMessage.includes('free time')) {
-        return "That sounds fascinating! How did you get interested in that? What do you enjoy most about it?";
+        const responses = [
+          "That sounds fascinating! How did you get interested in that? What do you enjoy most about it?",
+          "How wonderful! How long have you been doing that?",
+          "That's impressive! What's the most challenging part?",
+          "Great! Would you recommend it to others? Why?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('travel') || lowerMessage.includes('visit') || lowerMessage.includes('trip')) {
-        return "How wonderful! Traveling is such a great experience. What was the most memorable part of that trip?";
+        const responses = [
+          "How wonderful! Traveling is such a great experience. What was the most memorable part of that trip?",
+          "That sounds amazing! What did you learn from that experience?",
+          "How exciting! Where would you like to go next?",
+          "That's fantastic! What was the most surprising thing about that place?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('family') || lowerMessage.includes('friend') || lowerMessage.includes('relationship')) {
-        return "That's lovely! Family and friends are so important. Can you tell me more about that?";
+        const responses = [
+          "That's lovely! Family and friends are so important. Can you tell me more about that?",
+          "How wonderful! What do you value most about those relationships?",
+          "That's beautiful! How do you maintain those connections?",
+          "Great! What's the best advice you've received from them?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('food') || lowerMessage.includes('eat') || lowerMessage.includes('cook')) {
-        return "Food is such an important part of culture! What's your favorite dish? Why do you like it?";
+        const responses = [
+          "Food is such an important part of culture! What's your favorite dish? Why do you like it?",
+          "That sounds delicious! Do you enjoy cooking? What's your specialty?",
+          "How interesting! What's the most unusual food you've tried?",
+          "Great! What's your favorite type of cuisine?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('music') || lowerMessage.includes('movie') || lowerMessage.includes('book')) {
-        return "That's a great choice! What do you like about it? Would you recommend it to others?";
+        const responses = [
+          "That's a great choice! What do you like about it? Would you recommend it to others?",
+          "How interesting! What draws you to that type of entertainment?",
+          "That sounds wonderful! What's your all-time favorite?",
+          "Great! How do you usually discover new things to enjoy?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else if (lowerMessage.includes('sport') || lowerMessage.includes('exercise') || lowerMessage.includes('fitness')) {
-        return "Excellent! Staying active is so important. What do you enjoy most about that activity?";
+        const responses = [
+          "Excellent! Staying active is so important. What do you enjoy most about that activity?",
+          "That's fantastic! How often do you do that?",
+          "How motivating! What benefits have you noticed?",
+          "Great! What advice would you give to someone starting out?"
+        ];
+        return responses[Math.floor(Math.random() * responses.length)];
       } else {
-        const followUpQuestions = [
+        // Dynamic follow-up questions based on conversation context
+        const contextualQuestions = [
           "That's very interesting! Can you tell me more about that?",
           "I see! What do you like most about that?",
           "How fascinating! What made you choose that?",
@@ -475,28 +593,42 @@ router.post("/realtime/continue", async (req, res) => {
           "Interesting! What do you find most challenging about that?",
           "That's wonderful! What would you recommend to someone who wants to try that?",
           "How nice! What's the best part about that experience?",
-          "That's impressive! How did you get started with that?"
+          "That's impressive! How did you get started with that?",
+          "That's amazing! What's next for you in that area?",
+          "How exciting! What's your favorite memory related to that?",
+          "That's inspiring! What advice would you give to others?",
+          "How interesting! What surprised you most about that?"
         ];
-        return followUpQuestions[Math.floor(Math.random() * followUpQuestions.length)];
+        return contextualQuestions[Math.floor(Math.random() * contextualQuestions.length)];
       }
     };
     
     try {
-      // Try OpenAI first
+      // Try OpenAI first with enhanced context awareness
       const messages = [
         {
           role: "system",
-          content: `You are a friendly IELTS Speaking examiner. Continue the conversation naturally based on the candidate's response. 
-          
-          Guidelines:
-          - Ask follow-up questions that are relevant to their answer
-          - Show interest in their responses
-          - Occasionally provide gentle feedback on their speaking
-          - Keep the conversation engaging and natural
-          - Mix Part 1 and Part 3 style questions
-          - Be encouraging and supportive`
+          content: `You are a professional IELTS Speaking examiner conducting a dynamic practice session. 
+
+Your role:
+- Continue the conversation naturally based on the candidate's response
+- Ask follow-up questions that build on their previous answers
+- Show genuine interest and curiosity
+- Occasionally provide gentle feedback on their speaking
+- Mix Part 1 and Part 3 style questions naturally
+- Be conversational, engaging, and human-like
+- Adapt your questions based on their interests and background
+- Keep responses concise but meaningful (2-3 sentences max)
+- Make the conversation feel natural and flowing
+
+Guidelines:
+- Build on what they've shared
+- Ask for more details when appropriate
+- Show interest in their experiences
+- Occasionally challenge them with deeper questions
+- Keep the tone encouraging and supportive`
         },
-        ...conversationHistory,
+        ...conversationHistory.slice(-8), // Keep last 8 messages for better context
         {
           role: "user",
           content: userMessage
@@ -506,8 +638,8 @@ router.post("/realtime/continue", async (req, res) => {
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: messages,
-        max_tokens: 300,
-        temperature: 0.7
+        max_tokens: 250,
+        temperature: 0.8 // Higher temperature for more natural variation
       });
 
       const examinerResponse = response.choices[0].message.content.trim();
@@ -518,10 +650,10 @@ router.post("/realtime/continue", async (req, res) => {
       });
       
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for continue conversation, using fallback:", openaiError.message);
+      console.log("⚠️ OpenAI API failed for continue conversation, using enhanced fallback:", openaiError.message);
       
-      // Use fallback response
-      const fallbackResponse = getFallbackResponse(userMessage);
+      // Use enhanced fallback response
+      const fallbackResponse = getFallbackResponse(userMessage, conversationHistory);
       
       res.json({
         message: fallbackResponse,
