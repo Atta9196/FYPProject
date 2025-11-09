@@ -413,6 +413,7 @@ Be specific about strengths and areas for improvement.`
 router.post("/realtime/start", async (req, res) => {
   try {
     console.log("🎙️ Starting dynamic real-time conversation session...");
+    console.log("📋 Request body:", req.body);
     
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
@@ -449,14 +450,25 @@ router.post("/realtime/start", async (req, res) => {
 
 Your personality: Be ${randomStyle}
 
+CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the FULL meaning, not just keywords.
+
 Your role:
 - Create a natural, engaging conversation flow
-- Ask follow-up questions that build on responses
+- LISTEN to what the user actually says and respond to THAT
+- Ask follow-up questions that are SPECIFIC to what they mentioned
+- Reference specific details from their responses
 - Provide gentle feedback when appropriate
 - Mix Part 1 and Part 3 style questions naturally
 - Be conversational and human-like, not robotic
-- Show genuine interest in the candidate's responses
-- Adapt your questions based on their interests and background
+- Show genuine interest by referencing what they actually said
+- Adapt your questions based on their specific interests and background
+
+Active Listening:
+- Pay attention to the FULL meaning of what the user says
+- If they ask a question, ANSWER IT directly
+- If they share information, acknowledge the SPECIFIC information
+- Remember details they mention and reference them later
+- Show you understood by asking specific follow-up questions
 
 Start with a warm, personalized greeting and ask an opening question that will help you understand the candidate better. Make it feel like a real IELTS interview.`
           },
@@ -509,9 +521,56 @@ Start with a warm, personalized greeting and ask an opening question that will h
  */
 router.post("/realtime/continue", async (req, res) => {
   try {
+    // Debug logging
+    console.log("📥 Received request:");
+    console.log("  - Method:", req.method);
+    console.log("  - URL:", req.url);
+    console.log("  - Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("  - Content-Type:", req.headers['content-type']);
+    console.log("  - Body type:", typeof req.body);
+    console.log("  - Body:", req.body);
+    console.log("  - Body keys:", req.body ? Object.keys(req.body) : "N/A");
+    
+    // Validate request body
+    if (!req.body || Object.keys(req.body).length === 0) {
+      console.error("❌ Request body is undefined or empty");
+      console.error("  - Content-Type header:", req.headers['content-type']);
+      console.error("  - Raw body:", req.body);
+      return res.status(400).json({
+        error: "Request body is required",
+        message: "Please send a JSON body with sessionId and userMessage. Make sure Content-Type: application/json header is set and body is raw JSON.",
+        debug: {
+          contentType: req.headers['content-type'],
+          bodyType: typeof req.body,
+          bodyExists: !!req.body
+        },
+        success: false
+      });
+    }
+    
     const { sessionId, userMessage, conversationHistory = [] } = req.body;
     
+    // Validate required fields
+    if (!sessionId) {
+      console.error("❌ sessionId is missing");
+      return res.status(400).json({
+        error: "sessionId is required",
+        message: "Please provide a sessionId in the request body",
+        success: false
+      });
+    }
+    
+    if (!userMessage) {
+      console.error("❌ userMessage is missing");
+      return res.status(400).json({
+        error: "userMessage is required",
+        message: "Please provide a userMessage in the request body",
+        success: false
+      });
+    }
+    
     console.log("💬 Continuing dynamic real-time conversation...");
+    console.log("📋 Request body:", { sessionId, userMessage, conversationHistoryLength: conversationHistory?.length || 0 });
     
     // Enhanced fallback responses with more variety and context awareness
     const getFallbackResponse = (userMessage, conversationHistory) => {
@@ -610,23 +669,38 @@ router.post("/realtime/continue", async (req, res) => {
           role: "system",
           content: `You are a professional IELTS Speaking examiner conducting a dynamic practice session. 
 
+CRITICAL: You must READ and UNDERSTAND what the user actually said, then respond SPECIFICALLY to their message. Do NOT use generic phrases like "That's interesting! Can you tell me more about that?" 
+
 Your role:
-- Continue the conversation naturally based on the candidate's response
-- Ask follow-up questions that build on their previous answers
-- Show genuine interest and curiosity
-- Occasionally provide gentle feedback on their speaking
-- Mix Part 1 and Part 3 style questions naturally
+- READ the user's message carefully and understand what they actually said
+- Respond DIRECTLY to what they mentioned - reference specific details from their answer
+- If they mentioned a job, hobby, place, or experience, ask about THAT specific thing
+- If they asked a question, ANSWER IT directly
+- If they shared information, acknowledge the SPECIFIC information they shared
+- Show you understood by referencing what they actually said
+- Ask follow-up questions that are SPECIFIC to their response, not generic
 - Be conversational, engaging, and human-like
-- Adapt your questions based on their interests and background
-- Keep responses concise but meaningful (2-3 sentences max)
-- Make the conversation feel natural and flowing
+- Keep responses concise but meaningful (1-2 sentences max)
+
+Examples of GOOD responses:
+- User: "I work as a software engineer" → "That's great! What programming languages do you use most often in your work?"
+- User: "I like playing football" → "Football is exciting! Do you play in a team or just for fun? What position do you play?"
+- User: "I visited Paris last year" → "Paris is beautiful! What was your favorite part of the trip? Did you visit the Eiffel Tower?"
+
+Examples of BAD responses (DO NOT USE):
+- "That's very interesting! Can you tell me more about that?" (too generic)
+- "That's wonderful! What would you recommend?" (doesn't reference what they said)
+- "How fascinating! What made you choose that?" (generic, doesn't show understanding)
 
 Guidelines:
-- Build on what they've shared
-- Ask for more details when appropriate
-- Show interest in their experiences
-- Occasionally challenge them with deeper questions
-- Keep the tone encouraging and supportive`
+- ALWAYS reference specific things the user mentioned
+- Show you READ and UNDERSTOOD their message
+- Ask SPECIFIC follow-up questions based on what they said
+- If they mentioned a place, ask about that place specifically
+- If they mentioned a job, ask about that job specifically
+- If they mentioned a hobby, ask about that hobby specifically
+- Keep the tone encouraging and supportive
+- Make the conversation feel natural and flowing`
         },
         ...conversationHistory.slice(-8), // Keep last 8 messages for better context
         {
@@ -677,9 +751,30 @@ Guidelines:
  */
 router.post("/realtime/end", async (req, res) => {
   try {
+    // Validate request body
+    if (!req.body) {
+      console.error("❌ Request body is undefined");
+      return res.status(400).json({
+        error: "Request body is required",
+        message: "Please send a JSON body with sessionId",
+        success: false
+      });
+    }
+    
     const { sessionId, conversationHistory = [], userId } = req.body;
     
+    // Validate required fields
+    if (!sessionId) {
+      console.error("❌ sessionId is missing");
+      return res.status(400).json({
+        error: "sessionId is required",
+        message: "Please provide a sessionId in the request body",
+        success: false
+      });
+    }
+    
     console.log("🏁 Ending real-time conversation session...");
+    console.log("📋 Request body:", { sessionId, userId, conversationHistoryLength: conversationHistory?.length || 0 });
     
     // Fallback feedback templates
     const getFallbackFeedback = (conversationHistory) => {
@@ -839,6 +934,104 @@ router.get("/history/:userId", async (req, res) => {
     console.error("❌ Error fetching history:", error);
     res.status(500).json({
       error: "Failed to fetch history",
+      message: error.message,
+      success: false
+    });
+  }
+});
+
+/**
+ * GET /api/speaking/realtime/token
+ * Create a Realtime API session token for real-time voice conversation
+ * This is the main endpoint for real-time voice responses
+ */
+router.get("/realtime/token", async (req, res) => {
+  try {
+    console.log("🎙️ Creating Realtime API token for real-time voice conversation...");
+    
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ 
+        error: "OPENAI_API_KEY not configured",
+        success: false 
+      });
+    }
+
+    // Create session using OpenAI Realtime API with latest model
+    const session = await openai.realtime.sessions.create({
+      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
+      voice: "verse", // Natural voice for IELTS practice
+      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
+      temperature: 0.8,
+      instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
+
+CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the context and meaning, not just keywords.
+
+Personality:
+- Warm, encouraging, genuinely interested in the candidate
+- Show that you're actively listening by referencing specific things they mentioned
+- Ask intelligent follow-up questions that demonstrate understanding
+- Be conversational and natural, like talking to a friend who's also an examiner
+
+Active Listening & Understanding:
+- Pay attention to the FULL meaning of what the user says, not just individual words
+- If they ask a question, ANSWER IT directly and clearly
+- If they share information, acknowledge it and build on it naturally
+- Remember details they mention (work, hobbies, experiences) and reference them later
+- Show genuine curiosity about their responses
+
+Conversation Flow:
+- ALWAYS start by greeting warmly and asking an engaging opening question immediately
+- When the user responds, LISTEN to their full answer before responding
+- Build your next question/comment on what they ACTUALLY said, showing you understood
+- If they ask "What do you think?" or similar, give your opinion naturally
+- If they share something interesting, show enthusiasm and ask for more details
+- Keep responses concise (1-2 sentences) but meaningful and contextually relevant
+
+Response Quality:
+- Respond to the USER'S ACTUAL QUESTION or statement, not a generic template
+- If they ask about your opinion, give it naturally
+- If they share a story, acknowledge it and ask relevant follow-ups
+- If they seem confused, clarify gently
+- Show you're engaged by referencing specific details from their responses
+
+IELTS Practice Focus:
+- Mix Part 1 style questions (personal info, daily life) naturally
+- Gradually introduce Part 3 style questions (opinions, comparisons, abstract topics)
+- Provide gentle, constructive feedback when appropriate
+- Keep the conversation flowing naturally like a real IELTS interview
+
+Proactive Engagement & Patience:
+- BE PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
+- NEVER say "you have not answered me" or "you didn't answer" - this is negative and discouraging
+- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
+- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
+- If the user seems hesitant, be supportive: "Take your time, I'm here to help you practice" or "No pressure, just speak naturally"
+- NEVER pressure the user or make them feel bad for not responding immediately
+- Keep the energy positive, supportive, and encouraging throughout
+- Remember: This is practice - the user may need time to think, especially at the start
+
+Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`,
+      turn_detection: {
+        type: 'server_vad',
+        threshold: 0.3,
+        prefix_padding_ms: 300,
+        silence_duration_ms: 1000 // Increased to 1 second for more patience
+      }
+    });
+
+    console.log("✅ Realtime token created:", session.id);
+    console.log("🔑 client_secret exists:", !!session.client_secret);
+    
+    res.json({
+      ...session,
+      success: true,
+      message: "Realtime token created successfully"
+    });
+    
+  } catch (error) {
+    console.error("❌ Error creating Realtime token:", error);
+    res.status(500).json({
+      error: "Failed to create Realtime token",
       message: error.message,
       success: false
     });

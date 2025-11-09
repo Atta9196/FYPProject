@@ -21,7 +21,28 @@ const io = socketIo(server, {
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({ origin: true, credentials: false }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for larger payloads
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Support URL-encoded bodies
+
+// Debug middleware to log all incoming requests
+app.use((req, res, next) => {
+  if (req.path.includes('/realtime/continue') || req.path.includes('/realtime/start') || req.path.includes('/realtime/end')) {
+    console.log('🔍 Request Debug Middleware:');
+    console.log('  - Method:', req.method);
+    console.log('  - Path:', req.path);
+    console.log('  - Full URL:', req.url);
+    console.log('  - Content-Type:', req.headers['content-type']);
+    console.log('  - Body exists:', !!req.body);
+    console.log('  - Body type:', typeof req.body);
+    if (req.body) {
+      console.log('  - Body keys:', Object.keys(req.body));
+      console.log('  - Body content:', JSON.stringify(req.body, null, 2));
+    } else {
+      console.log('  - ⚠️ Body is undefined or empty');
+    }
+  }
+  next();
+});
 
 // Debug logs at startup
 console.log("==== Loaded ENV values at startup ====");
@@ -60,6 +81,10 @@ app.use("/api/auth", authRoutes);
 const speakingRoutes = require("./routes/speakingRoutes");
 app.use("/api/speaking", speakingRoutes);
 
+// Voice/Realtime API routes
+const voiceRoutes = require("./routes/voiceRoutes");
+app.use("/api/voice", voiceRoutes);
+
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
 const fs = require('fs');
@@ -70,6 +95,9 @@ const openai = new OpenAI({
 
 // Store conversation sessions
 const conversationSessions = new Map();
+
+// Store accumulated audio chunks for streaming sessions
+const streamingAudioChunks = new Map(); // sessionId -> { chunks: [], timeout: null, lastChunkTime: null }
 
 // Ensure uploads directory exists before writing temp audio files
 function ensureUploadsDir() {
@@ -114,6 +142,14 @@ Your personality:
 - Keep the conversation flowing like a real IELTS interview
 - Mix Part 1 and Part 3 style questions naturally
 - Be conversational, not robotic or scripted
+
+Patience & Support:
+- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
+- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
+- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
+- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
+- NEVER pressure or rush the user - this is practice, they need time to think
+- Be supportive and encouraging, never accusatory
 
 Start with a warm, personalized greeting and ask an opening question that will help you understand the candidate better. Make it feel like meeting a real person, not taking a test.`
               },
@@ -193,59 +229,156 @@ Start with a warm, personalized greeting and ask an opening question that will h
         }
         
       } else if (data.type === 'streaming-audio') {
-        // Process streaming audio chunk for real-time conversation
-        console.log('🎵 Processing streaming audio chunk...');
+        // Accumulate streaming audio chunks and process when silence is detected
+        const sessionId = data.sessionId;
+        if (!sessionId) {
+          console.error('❌ No session ID in streaming audio');
+          socket.emit('voice-error', { message: 'No session ID provided' });
+          return;
+        }
         
-        try {
-          // Convert base64 audio to buffer
-          const audioBuffer = Buffer.from(data.audioData, 'base64');
-          const uploadsDir = ensureUploadsDir();
-          if (!uploadsDir) throw new Error('Uploads directory unavailable');
-          const tempFilePath = path.join(uploadsDir, `streaming_audio_${Date.now()}.webm`);
-          
-          // Save audio to temporary file
-          fs.writeFileSync(tempFilePath, audioBuffer);
-          
-          // Transcribe audio using Whisper
-          const transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(tempFilePath),
-            model: "whisper-1",
-            language: "en"
+        if (!data.audioData) {
+          console.error('❌ No audio data in streaming audio chunk');
+          return;
+        }
+        
+        console.log(`🎵 Received streaming audio chunk for session ${sessionId} (${data.audioData.length} chars base64)...`);
+        
+        // Initialize chunk accumulator if not exists
+        if (!streamingAudioChunks.has(sessionId)) {
+          streamingAudioChunks.set(sessionId, {
+            chunks: [],
+            timeout: null,
+            lastChunkTime: Date.now()
           });
+        }
+        
+        const chunkAccumulator = streamingAudioChunks.get(sessionId);
+        
+        // Add chunk to accumulator
+        chunkAccumulator.chunks.push(Buffer.from(data.audioData, 'base64'));
+        chunkAccumulator.lastChunkTime = Date.now();
+        
+        console.log(`📦 Accumulated ${chunkAccumulator.chunks.length} chunks for session ${sessionId}`);
+        
+        // Clear existing timeout
+        if (chunkAccumulator.timeout) {
+          clearTimeout(chunkAccumulator.timeout);
+        }
+        
+        // Process accumulated chunks after 500ms of silence (no new chunks) - faster response
+        chunkAccumulator.timeout = setTimeout(async () => {
+          try {
+            // Get a snapshot of chunks to process (copy array to avoid race conditions)
+            const chunksToProcess = [...chunkAccumulator.chunks];
+            
+            if (chunksToProcess.length === 0) {
+              console.log('⚠️ No chunks to process');
+              return;
+            }
+            
+            const totalSize = chunksToProcess.reduce((sum, c) => sum + c.length, 0);
+            console.log(`🎵 Processing ${chunksToProcess.length} accumulated chunks (${totalSize} bytes)...`);
+            
+            // Check if we have enough audio to process (at least 1KB for transcription)
+            if (totalSize < 1024) {
+              console.log(`⚠️ Audio too small to process (${totalSize} bytes < 1KB), waiting for more chunks...`);
+              // Don't clear chunks, wait for more
+              return;
+            }
+            
+            // Clear chunks for next accumulation BEFORE processing
+            chunkAccumulator.chunks = [];
+            
+            // Combine all chunks into one buffer
+            const combinedBuffer = Buffer.concat(chunksToProcess);
+            
+            const uploadsDir = ensureUploadsDir();
+            if (!uploadsDir) throw new Error('Uploads directory unavailable');
+            const tempFilePath = path.join(uploadsDir, `streaming_audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.webm`);
+            
+            // Save combined audio to temporary file
+            fs.writeFileSync(tempFilePath, combinedBuffer);
+            
+            console.log(`📝 Transcribing audio (${combinedBuffer.length} bytes)...`);
+            
+            // Transcribe audio using Whisper
+            const transcription = await openai.audio.transcriptions.create({
+              file: fs.createReadStream(tempFilePath),
+              model: "whisper-1",
+              language: "en"
+            });
 
-          const userMessage = transcription.text;
-          console.log('📝 User said (streaming):', userMessage);
+            const userMessage = transcription.text.trim();
+            console.log('📝 User said (streaming):', userMessage);
+            
+            // Skip if transcription is empty or too short
+            if (!userMessage || userMessage.length < 2) {
+              console.log('⚠️ Transcription too short or empty, skipping response');
+              fs.unlinkSync(tempFilePath);
+              
+              // Send acknowledgment to client that audio was processed but no response needed
+              socket.emit('voice-response', {
+                type: 'streaming-response',
+                message: 'I heard you, but couldn\'t make out what you said. Could you please speak again?',
+                audioData: null,
+                userTranscript: '[Unclear audio]',
+                fallback: true
+              });
+              return;
+            }
 
-          // Get conversation history and context
-          const session = conversationSessions.get(data.sessionId);
-          if (!session) {
-            throw new Error('Session not found');
-          }
+            // Get conversation history and context
+            const session = conversationSessions.get(sessionId);
+            if (!session) {
+              console.error('❌ Session not found:', sessionId);
+              fs.unlinkSync(tempFilePath);
+              return;
+            }
 
-          // Add user message to history
-          session.history.push({ role: 'user', content: userMessage });
+            // Add user message to history
+            session.history.push({ role: 'user', content: userMessage });
 
-          // Update conversation context based on user response
-          updateConversationContext(session, userMessage);
+            // Update conversation context based on user response
+            updateConversationContext(session, userMessage);
 
-          // Generate quick AI response for streaming
-          const aiResponse = await openai.chat.completions.create({
+            console.log('🤖 Generating AI response...');
+            
+            // Generate quick AI response for streaming
+            const aiResponse = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
                 content: `You are a professional IELTS Speaking examiner conducting a real-time, streaming conversation practice session.
 
+CRITICAL: You must READ and UNDERSTAND what the user actually said, then respond SPECIFICALLY to their message. Do NOT use generic phrases like "That's interesting! Can you tell me more about that?" 
+
 Your personality:
 - Be warm, encouraging, and genuinely interested in the candidate
-- Keep responses SHORT and conversational (1-2 sentences max)
-- Ask quick follow-up questions that build naturally on their responses
-- Show curiosity about their experiences, opinions, and feelings
-- Occasionally provide gentle, constructive feedback
-- Keep the conversation flowing like a real IELTS interview
-- Mix Part 1 and Part 3 style questions naturally
-- Be conversational, not robotic or scripted
-- Remember what they've told you and reference it naturally
+- Show active listening by referencing SPECIFIC things they mentioned
+- Ask intelligent follow-up questions that are SPECIFIC to what they said
+- Be conversational and natural, like talking to a friend who's also an examiner
+
+Active Listening & Understanding:
+- READ the user's message carefully and understand what they actually said
+- Respond DIRECTLY to what they mentioned - reference specific details from their answer
+- If they mentioned a job, hobby, place, or experience, ask about THAT specific thing
+- If they asked a question, ANSWER IT directly and clearly
+- If they shared information, acknowledge the SPECIFIC information they shared
+- Show you understood by referencing what they actually said
+- Remember details they mention and reference them later
+- Show genuine curiosity about their responses
+
+Examples of GOOD responses:
+- User: "I work as a software engineer" → "That's great! What programming languages do you use most often in your work?"
+- User: "I like playing football" → "Football is exciting! Do you play in a team or just for fun? What position do you play?"
+- User: "I visited Paris last year" → "Paris is beautiful! What was your favorite part of the trip? Did you visit the Eiffel Tower?"
+
+Examples of BAD responses (DO NOT USE):
+- "That's very interesting! Can you tell me more about that?" (too generic)
+- "That's wonderful! What would you recommend?" (doesn't reference what they said)
+- "How fascinating! What made you choose that?" (generic, doesn't show understanding)
 
 Conversation context:
 - Topics discussed: ${session.conversationContext.topicsDiscussed.join(', ') || 'None yet'}
@@ -253,13 +386,24 @@ Conversation context:
 - Strengths observed: ${session.conversationContext.strengths.join(', ') || 'None yet'}
 
 Guidelines for streaming:
-- Keep responses VERY SHORT (1-2 sentences)
-- Make them feel natural and conversational
-- Build on what they've shared
-- Ask for more details when appropriate
-- Show genuine interest in their experiences
-- Occasionally challenge them with deeper questions
-- Make the conversation feel natural and flowing`
+- Keep responses SHORT (1-2 sentences) but meaningful
+- ALWAYS reference specific things the user mentioned
+- Show you READ and UNDERSTOOD their message
+- Ask SPECIFIC follow-up questions based on what they said
+- If they mentioned a place, ask about that place specifically
+- If they mentioned a job, ask about that job specifically
+- If they mentioned a hobby, ask about that hobby specifically
+- Make the conversation feel natural and flowing
+
+Patience & Support:
+- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
+- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
+- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
+- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
+- NEVER pressure or rush the user - this is practice, they need time to think
+- Be supportive and encouraging, never accusatory
+
+Remember: You're having a REAL conversation. Read what the user actually said and respond specifically to that. Be patient, encouraging, and supportive. Never rush or pressure the user.`
               },
               ...session.history.slice(-6), // Keep last 6 messages for better context
               {
@@ -271,50 +415,85 @@ Guidelines for streaming:
             temperature: 0.8
           });
 
-          const aiMessage = aiResponse.choices[0].message.content.trim();
-          
-          // Add AI response to history
-          session.history.push({ role: 'examiner', content: aiMessage });
+            const aiMessage = aiResponse.choices[0].message.content.trim();
+            console.log('✅ AI response generated:', aiMessage);
+            
+            // Add AI response to history
+            session.history.push({ role: 'examiner', content: aiMessage });
 
-          // Generate speech for AI response
-          console.log('🎵 Generating streaming speech for AI response:', aiMessage);
-          const speechResponse = await openai.audio.speech.create({
-            model: "tts-1",
-            voice: "alloy",
-            input: aiMessage,
-            response_format: "mp3"
-          });
+            // Generate speech for AI response
+            console.log('🎵 Generating speech for AI response...');
+            const speechResponse = await openai.audio.speech.create({
+              model: "tts-1",
+              voice: "alloy",
+              input: aiMessage,
+              response_format: "mp3"
+            });
 
-          const aiAudioBuffer = Buffer.from(await speechResponse.arrayBuffer());
-          const aiAudioBase64 = aiAudioBuffer.toString('base64');
-          console.log('🎵 Generated streaming AI audio buffer size:', aiAudioBuffer.length, 'bytes');
+            const aiAudioBuffer = Buffer.from(await speechResponse.arrayBuffer());
+            const aiAudioBase64 = aiAudioBuffer.toString('base64');
+            console.log('✅ Generated AI audio buffer size:', aiAudioBuffer.length, 'bytes');
 
-          // Clean up temporary file
-          fs.unlinkSync(tempFilePath);
+            // Clean up temporary file
+            fs.unlinkSync(tempFilePath);
 
-          socket.emit('voice-response', {
-            type: 'streaming-response',
-            message: aiMessage,
-            audioData: aiAudioBase64,
-            userTranscript: userMessage,
-            fallback: false
-          });
+            console.log('📤 Sending response to client...');
+            socket.emit('voice-response', {
+              type: 'streaming-response',
+              message: aiMessage,
+              audioData: aiAudioBase64,
+              userTranscript: userMessage,
+              fallback: false
+            });
+            
+            console.log('✅ Response sent successfully');
+            
+          } catch (openaiError) {
+            console.error('❌ Error processing streaming audio:', openaiError);
+            
+            // Clean up temp file if it exists
+            try {
+              if (tempFilePath && fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+              }
+            } catch (e) {
+              console.warn('⚠️ Error cleaning up temp file:', e);
+            }
+            
+            // Enhanced fallback responses based on conversation context
+            const session = conversationSessions.get(sessionId);
+            if (!session) {
+              console.error('❌ Session not found for fallback');
+              return;
+            }
+            
+            const fallbackResponse = getContextualFallbackResponse(session);
           
-        } catch (openaiError) {
-          console.log('⚠️ OpenAI API failed for streaming audio processing, using enhanced fallback:', openaiError.message);
-          
-          // Enhanced fallback responses based on conversation context
-          const session = conversationSessions.get(data.sessionId);
-          const fallbackResponse = getContextualFallbackResponse(session);
-          
-          socket.emit('voice-response', {
-            type: 'streaming-response',
-            message: fallbackResponse,
-            audioData: null,
-            userTranscript: '[Audio processed]',
-            fallback: true
-          });
-        }
+            // Try to generate TTS for fallback response
+            let fallbackAudio = null;
+            try {
+              const fallbackSpeech = await openai.audio.speech.create({
+                model: "tts-1",
+                voice: "alloy",
+                input: fallbackResponse,
+                response_format: "mp3"
+              });
+              const fallbackAudioBuffer = Buffer.from(await fallbackSpeech.arrayBuffer());
+              fallbackAudio = fallbackAudioBuffer.toString('base64');
+              console.log('✅ Generated fallback audio for streaming response');
+            } catch (ttsError) {
+              console.warn('⚠️ Could not generate TTS for fallback, client will use browser TTS:', ttsError.message);
+            }
+            
+            socket.emit('voice-response', {
+              type: 'streaming-response',
+              message: fallbackResponse,
+              audioData: fallbackAudio, // Try to include audio even in fallback
+              userTranscript: '[Audio processed]',
+              fallback: true
+            });
+          }
+        }, 500); // Wait 500ms after last chunk before processing - faster response
         
       } else if (data.type === 'audio-chunk') {
         // Process audio chunk and respond with dynamic AI
@@ -360,15 +539,20 @@ Guidelines for streaming:
                 role: "system",
                 content: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
 
+CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the FULL meaning, not just keywords.
+
 Your personality:
 - Be warm, encouraging, and genuinely interested in the candidate
-- Ask follow-up questions that build naturally on their responses
-- Show curiosity about their experiences, opinions, and feelings
-- Occasionally provide gentle, constructive feedback
-- Keep the conversation flowing like a real IELTS interview
-- Mix Part 1 and Part 3 style questions naturally
-- Be conversational, not robotic or scripted
-- Remember what they've told you and reference it naturally
+- Show active listening by referencing specific things they mentioned
+- Ask intelligent follow-up questions that demonstrate understanding
+- Be conversational and natural, like talking to a friend who's also an examiner
+
+Active Listening & Understanding:
+- Pay attention to the FULL meaning of what the user says
+- If they ask a question, ANSWER IT directly and clearly
+- If they share information, acknowledge it and build on it naturally
+- Remember details they mention and reference them later
+- Show genuine curiosity about their responses
 
 Conversation context:
 - Topics discussed: ${session.conversationContext.topicsDiscussed.join(', ') || 'None yet'}
@@ -376,12 +560,23 @@ Conversation context:
 - Strengths observed: ${session.conversationContext.strengths.join(', ') || 'None yet'}
 
 Guidelines:
-- Build on what they've shared
+- Respond to what they ACTUALLY said, not generic templates
+- If they ask "What do you think?", give your opinion naturally
+- Build on their specific responses, showing you understood
 - Ask for more details when appropriate
 - Show genuine interest in their experiences
-- Occasionally challenge them with deeper questions
 - Keep responses conversational and engaging (2-3 sentences max)
-- Make the conversation feel natural and flowing`
+- Make the conversation feel natural and flowing
+
+Patience & Support:
+- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
+- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
+- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
+- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
+- NEVER pressure or rush the user - this is practice, they need time to think
+- Be supportive and encouraging, never accusatory
+
+Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`
               },
               ...session.history.slice(-8), // Keep last 8 messages for better context
               {
@@ -429,10 +624,26 @@ Guidelines:
           const session = conversationSessions.get(data.sessionId);
           const fallbackResponse = getContextualFallbackResponse(session);
           
+          // Try to generate TTS for fallback response
+          let fallbackAudio = null;
+          try {
+            const fallbackSpeech = await openai.audio.speech.create({
+              model: "tts-1",
+              voice: "alloy",
+              input: fallbackResponse,
+              response_format: "mp3"
+            });
+            const fallbackAudioBuffer = Buffer.from(await fallbackSpeech.arrayBuffer());
+            fallbackAudio = fallbackAudioBuffer.toString('base64');
+            console.log('✅ Generated fallback audio for AI response');
+          } catch (ttsError) {
+            console.warn('⚠️ Could not generate TTS for fallback, client will use browser TTS:', ttsError.message);
+          }
+          
           socket.emit('voice-response', {
             type: 'ai-response',
             message: fallbackResponse,
-            audioData: null,
+            audioData: fallbackAudio, // Try to include audio even in fallback
             userTranscript: '[Audio processed]',
             fallback: true
           });

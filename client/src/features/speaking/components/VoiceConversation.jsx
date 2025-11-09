@@ -12,7 +12,7 @@ export function VoiceConversation({ onEndSession }) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [userTranscript, setUserTranscript] = useState('');
-    const [isStreamingMode, setIsStreamingMode] = useState(false);
+    const [isStreamingMode, setIsStreamingMode] = useState(true); // Always use streaming mode
     const [voiceActivity, setVoiceActivity] = useState(false);
     
     const socketRef = useRef(null);
@@ -26,51 +26,68 @@ export function VoiceConversation({ onEndSession }) {
     const streamingIntervalRef = useRef(null);
     const realtimeRef = useRef(null);
     const realtimeAudioRef = useRef(null);
-    const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME === 'true');
+    const processingTimeoutRef = useRef(null); // Timeout for processing response
+    const lastAudioSentTimeRef = useRef(null); // Track when audio was last sent
+    // Enable Realtime API by default for better experience, can be disabled via env var
+    const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME !== 'false');
 
     useEffect(() => {
-        // Initialize socket connection using env-configured URL (for chained mode)
-        if (!useRealtime) {
-            const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
+        // Always initialize socket connection as fallback (even if Realtime API is enabled)
+        // This ensures socket is available if Realtime API fails
+        const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
+        
+        // Initialize socket connection
+        if (!socketRef.current) {
+            console.log('🔌 Initializing Socket.io connection...');
             socketRef.current = io(SERVER_URL);
         }
         
-        if (!useRealtime && socketRef.current) {
+        // Set up socket event handlers
+        if (socketRef.current) {
             socketRef.current.on('connect', () => {
                 console.log('🔌 Connected to voice server');
+                // Always set connected when socket connects (even if Realtime is enabled, socket is fallback)
                 setIsConnected(true);
             });
-        } else if (useRealtime) {
-            setIsConnected(true);
-        }
-        
-        if (!useRealtime && socketRef.current) {
+            
             socketRef.current.on('voice-response', (data) => {
                 console.log('🎙️ Voice response received:', data);
                 handleVoiceResponse(data);
             });
-        }
-        
-        if (!useRealtime && socketRef.current) {
+            
             socketRef.current.on('voice-error', (error) => {
                 console.error('❌ Voice error:', error);
                 setIsProcessing(false);
+                setIsRecording(false);
+                
+                // Clear processing timeout
+                if (processingTimeoutRef.current) {
+                    clearTimeout(processingTimeoutRef.current);
+                    processingTimeoutRef.current = null;
+                }
+                
+                setCurrentMessage(`❌ Error: ${error.message || 'Unknown error occurred'}. Please try speaking again.`);
+            });
+            
+            socketRef.current.on('disconnect', () => {
+                console.log('🔌 Disconnected from voice server');
+                // Only update connection state if not using Realtime API or if Realtime is not active
+                if (!useRealtime || !realtimeRef.current || sessionId !== 'realtime') {
+                    setIsConnected(false);
+                }
             });
         }
         
-        if (!useRealtime && socketRef.current) {
-            socketRef.current.on('disconnect', () => {
-                console.log('🔌 Disconnected from voice server');
-                setIsConnected(false);
-            });
-        }
+        // Don't set connected immediately - wait for actual connection
+        // Connection will be set when socket connects or Realtime API connects
         
         return () => {
             if (socketRef.current) {
                 socketRef.current.disconnect();
+                socketRef.current = null;
             }
         };
-    }, []);
+    }, [useRealtime]);
 
     const handleVoiceResponse = (data) => {
         if (data.type === 'session-started') {
@@ -79,16 +96,25 @@ export function VoiceConversation({ onEndSession }) {
             setConversationHistory([{
                 role: 'examiner',
                 content: data.message,
-                timestamp: new Date()
+                timestamp: new Date(),
+                isAudio: true
             }]);
             
-            // Play AI greeting if audio is available
+            // ALWAYS play AI greeting with voice (prefer audioData, fallback to TTS)
             if (data.audioData) {
+                console.log('🔊 Playing AI greeting audio...');
                 playAudioResponse(data.audioData);
             } else {
+                console.log('🔊 Using TTS for AI greeting...');
                 speakWithSpeechSynthesis(data.message);
             }
         } else if (data.type === 'ai-response') {
+            // Clear processing timeout since we got a response
+            if (processingTimeoutRef.current) {
+                clearTimeout(processingTimeoutRef.current);
+                processingTimeoutRef.current = null;
+            }
+            
             setCurrentMessage(data.message);
             setUserTranscript(data.userTranscript || '');
             setConversationHistory(prev => [
@@ -101,18 +127,30 @@ export function VoiceConversation({ onEndSession }) {
                 {
                     role: 'examiner',
                     content: data.message,
-                    timestamp: new Date()
+                    timestamp: new Date(),
+                    isAudio: true
                 }
             ]);
             setIsProcessing(false);
+            setIsRecording(false); // Make sure recording is stopped
             
-            // Play AI response if audio is available
+            // ALWAYS play AI response with voice (prefer audioData, fallback to TTS)
             if (data.audioData) {
+                console.log('🔊 Playing AI response audio...');
                 playAudioResponse(data.audioData);
             } else {
+                console.log('🔊 Using TTS for AI response...');
                 speakWithSpeechSynthesis(data.message);
             }
         } else if (data.type === 'streaming-response') {
+            // Clear processing timeout since we got a response
+            if (processingTimeoutRef.current) {
+                clearTimeout(processingTimeoutRef.current);
+                processingTimeoutRef.current = null;
+            }
+            
+            console.log('✅ Received streaming response from server:', data.message);
+            
             setCurrentMessage(data.message);
             setUserTranscript(data.userTranscript || '');
             setConversationHistory(prev => [
@@ -125,29 +163,35 @@ export function VoiceConversation({ onEndSession }) {
                 {
                     role: 'examiner',
                     content: data.message,
-                    timestamp: new Date()
+                    timestamp: new Date(),
+                    isAudio: true
                 }
             ]);
             setIsProcessing(false);
             
-            // Play AI response if audio is available
+            // ALWAYS play AI response with voice (prefer audioData, fallback to TTS)
             if (data.audioData) {
+                console.log('🔊 Playing streaming AI response audio...');
                 playAudioResponse(data.audioData);
             } else {
+                console.log('🔊 Using TTS for streaming AI response...');
                 speakWithSpeechSynthesis(data.message);
             }
         } else if (data.type === 'session-ended') {
             setConversationHistory(prev => [...prev, {
                 role: 'examiner',
                 content: data.feedback,
-                timestamp: new Date()
+                timestamp: new Date(),
+                isAudio: true
             }]);
             setIsProcessing(false);
             
-            // Play session summary if audio is available
+            // ALWAYS play session summary with voice (prefer audioData, fallback to TTS)
             if (data.audioData) {
+                console.log('🔊 Playing session summary audio...');
                 playAudioResponse(data.audioData);
             } else {
+                console.log('🔊 Using TTS for session summary...');
                 speakWithSpeechSynthesis(data.feedback);
             }
         }
@@ -155,53 +199,112 @@ export function VoiceConversation({ onEndSession }) {
 
     const speakWithSpeechSynthesis = (text) => {
         try {
-            if (!('speechSynthesis' in window)) return;
-            if (!text) return;
+            if (!('speechSynthesis' in window)) {
+                console.warn('⚠️ SpeechSynthesis not available in this browser');
+                return;
+            }
+            if (!text) {
+                console.warn('⚠️ No text provided for TTS');
+                return;
+            }
+            
+            console.log('🔊 Using browser TTS to speak:', text.substring(0, 50) + '...');
+            
             // Stop any ongoing speech first
             window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(text);
-            utter.lang = 'en-US';
-            utter.rate = 1.0;
-            utter.pitch = 1.0;
-            setIsPlaying(true);
-            utter.onend = () => setIsPlaying(false);
-            utter.onerror = () => setIsPlaying(false);
-            window.speechSynthesis.speak(utter);
+            
+            // Wait a moment for cancel to complete
+            setTimeout(() => {
+                const utter = new SpeechSynthesisUtterance(text);
+                utter.lang = 'en-US';
+                utter.rate = 1.0;
+                utter.pitch = 1.0;
+                utter.volume = 1.0;
+                
+                setIsPlaying(true);
+                
+                utter.onstart = () => {
+                    console.log('🎵 TTS started speaking');
+                };
+                
+                utter.onend = () => {
+                    console.log('🎵 TTS finished speaking');
+                    setIsPlaying(false);
+                };
+                
+                utter.onerror = (e) => {
+                    console.error('❌ TTS error:', e);
+                    setIsPlaying(false);
+                };
+                
+                window.speechSynthesis.speak(utter);
+            }, 100);
         } catch (e) {
-            console.warn('⚠️ SpeechSynthesis fallback failed:', e);
+            console.error('❌ SpeechSynthesis failed:', e);
             setIsPlaying(false);
         }
     };
 
     const playAudioResponse = (audioBase64) => {
         try {
-            setIsPlaying(true);
-            console.log('🔊 Playing AI audio response...');
-            
-            // Convert base64 to audio blob
-            const audioData = atob(audioBase64);
-            const audioArray = new Uint8Array(audioData.length);
-            for (let i = 0; i < audioData.length; i++) {
-                audioArray[i] = audioData.charCodeAt(i);
+            if (!audioBase64) {
+                console.warn('⚠️ No audio data provided, cannot play');
+                return;
             }
             
-            // Try different audio formats
+            setIsPlaying(true);
+            console.log('🔊 Playing AI audio response...', { audioLength: audioBase64.length });
+            
+            // Stop any currently playing audio first
+            if (audioRef.current) {
+                try {
+                    audioRef.current.pause();
+                    audioRef.current.currentTime = 0;
+                } catch (e) {
+                    // Ignore errors
+                }
+            }
+            
+            // Convert base64 to audio blob
+            let audioArray;
+            try {
+                const audioData = atob(audioBase64);
+                audioArray = new Uint8Array(audioData.length);
+                for (let i = 0; i < audioData.length; i++) {
+                    audioArray[i] = audioData.charCodeAt(i);
+                }
+            } catch (error) {
+                console.error('❌ Error decoding base64 audio:', error);
+                setIsPlaying(false);
+                return;
+            }
+            
+            // Try different audio formats - MP3 is most common from OpenAI TTS
             const audioFormats = [
                 { type: 'audio/mp3', blob: new Blob([audioArray], { type: 'audio/mp3' }) },
                 { type: 'audio/mpeg', blob: new Blob([audioArray], { type: 'audio/mpeg' }) },
-                { type: 'audio/wav', blob: new Blob([audioArray], { type: 'audio/wav' }) }
+                { type: 'audio/wav', blob: new Blob([audioArray], { type: 'audio/wav' }) },
+                { type: 'audio/webm', blob: new Blob([audioArray], { type: 'audio/webm' }) }
             ];
             
             const tryPlayAudio = (formatIndex = 0) => {
                 if (formatIndex >= audioFormats.length) {
-                    console.error('❌ All audio formats failed');
+                    console.error('❌ All audio formats failed, falling back to TTS');
                     setIsPlaying(false);
+                    // Fallback to TTS if audio playback fails
+                    const message = currentMessage || conversationHistory[conversationHistory.length - 1]?.content;
+                    if (message) {
+                        speakWithSpeechSynthesis(message);
+                    }
                     return;
                 }
                 
                 const format = audioFormats[formatIndex];
                 const audioUrl = URL.createObjectURL(format.blob);
                 const audio = new Audio(audioUrl);
+                
+                // Store audio reference
+                audioRef.current = audio;
                 
                 audio.onloadstart = () => {
                     console.log(`🎵 Audio loading started (${format.type})`);
@@ -213,12 +316,14 @@ export function VoiceConversation({ onEndSession }) {
                 
                 audio.onplay = () => {
                     console.log(`🎵 Audio started playing (${format.type})`);
+                    setIsPlaying(true);
                 };
                 
                 audio.onended = () => {
                     console.log(`🎵 Audio finished playing (${format.type})`);
                     setIsPlaying(false);
                     URL.revokeObjectURL(audioUrl);
+                    audioRef.current = null;
                 };
                 
                 audio.onerror = (e) => {
@@ -229,7 +334,9 @@ export function VoiceConversation({ onEndSession }) {
                 };
                 
                 // Add error handling for play promise
-                audio.play().catch(error => {
+                audio.play().then(() => {
+                    console.log(`✅ Audio playback started successfully (${format.type})`);
+                }).catch(error => {
                     console.error(`❌ Error starting audio playback (${format.type}):`, error);
                     URL.revokeObjectURL(audioUrl);
                     // Try next format
@@ -242,30 +349,102 @@ export function VoiceConversation({ onEndSession }) {
         } catch (error) {
             console.error('❌ Error playing audio:', error);
             setIsPlaying(false);
+            // Fallback to TTS
+            const message = currentMessage || conversationHistory[conversationHistory.length - 1]?.content;
+            if (message) {
+                speakWithSpeechSynthesis(message);
+            }
         }
     };
 
     const startVoiceSession = async () => {
         try {
             if (useRealtime) {
-                // Realtime OpenAI: start WebRTC session
-                if (!realtimeRef.current) realtimeRef.current = createRealtimeAgent();
-                if (!realtimeAudioRef.current) realtimeAudioRef.current = new Audio();
-                await realtimeRef.current.start({
-                    audioEl: realtimeAudioRef.current,
-                    onConnected: () => setIsConnected(true),
-                    onError: (e) => {
-                        console.error('❌ Realtime start failed:', e);
-                        setIsConnected(false);
-                    },
-                    maxDurationMs: 2 * 60 * 1000
-                });
-                setSessionId('realtime');
-                setCurrentMessage('🎧 Realtime voice connected. You can start speaking.');
-                setIsStreamingMode(true);
-                return;
+                try {
+                    // Realtime OpenAI: start WebRTC session
+                    if (!realtimeRef.current) realtimeRef.current = createRealtimeAgent();
+                    if (!realtimeAudioRef.current) realtimeAudioRef.current = new Audio();
+                    
+                // Set up audio element event handlers for real-time voice
+                if (realtimeAudioRef.current) {
+                    realtimeAudioRef.current.onplay = () => {
+                        setIsPlaying(true);
+                        console.log('🔊 AI is speaking in real-time...');
+                        setCurrentMessage('🔊 AI is speaking...');
+                    };
+                    
+                    realtimeAudioRef.current.onended = () => {
+                        setIsPlaying(false);
+                        console.log('🔊 AI finished speaking');
+                        setCurrentMessage('✅ AI finished speaking. You can respond now.');
+                    };
+                    
+                    realtimeAudioRef.current.onerror = (e) => {
+                        console.error('❌ Audio playback error:', e);
+                        setIsPlaying(false);
+                    };
+                    
+                    realtimeAudioRef.current.onloadedmetadata = () => {
+                        console.log('🎵 AI audio metadata loaded');
+                    };
+                    
+                    realtimeAudioRef.current.oncanplay = () => {
+                        console.log('🎵 AI audio can play');
+                    };
+                }
+                    
+                    await realtimeRef.current.start({
+                        audioEl: realtimeAudioRef.current,
+                        onConnected: () => {
+                            setIsConnected(true);
+                            setCurrentMessage('🎧 Realtime voice connected! The AI will greet you and start the conversation. Just speak naturally - the AI will listen and respond intelligently to what you say.');
+                            setIsStreamingMode(true);
+                            setIsListening(true);
+                            
+                            // Add to conversation history
+                            setConversationHistory([{
+                                role: 'examiner',
+                                content: '🎧 Voice session connected. The AI will greet you and start the conversation. Speak naturally and the AI will understand and respond to your questions and statements.',
+                                timestamp: new Date()
+                            }]);
+                            
+                            console.log('✅ Realtime API connected successfully');
+                        },
+                        onError: (e) => {
+                            console.error('❌ Realtime start failed:', e);
+                            setIsConnected(false);
+                            setCurrentMessage(`❌ Connection failed: ${e.message}. Falling back to Socket.io mode...`);
+                            throw e; // Re-throw to be caught by outer catch
+                        },
+                        maxDurationMs: 10 * 60 * 1000 // 10 minutes
+                    });
+                    setSessionId('realtime');
+                    
+                    return; // Success - exit function
+                } catch (realtimeError) {
+                    // If Realtime API fails, fall back to Socket.io mode
+                    console.warn('⚠️ Realtime API failed, falling back to Socket.io mode:', realtimeError);
+                    setCurrentMessage(`⚠️ Realtime API unavailable. Using Socket.io mode instead...`);
+                    // Continue to Socket.io mode below
+                }
             }
-            // Request microphone access
+            
+            // Check microphone permissions first (non-blocking)
+            try {
+                await checkMicrophonePermission();
+            } catch (permError) {
+                console.warn('⚠️ Permission check warning:', permError);
+                // Continue anyway - getUserMedia will handle the actual permission
+            }
+            
+            // Request microphone access (Socket.io fallback mode)
+            console.log('🎤 Requesting microphone access...');
+            
+            // Check if getUserMedia is available
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('getUserMedia is not supported in this browser. Please use a modern browser like Chrome, Firefox, or Edge.');
+            }
+            
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     echoCancellation: true,
@@ -273,11 +452,18 @@ export function VoiceConversation({ onEndSession }) {
                     sampleRate: 44100
                 } 
             });
+            console.log('✅ Microphone access granted');
             
             streamRef.current = stream;
             
             // Setup audio context for voice activity detection
             setupVoiceActivityDetection(stream);
+            
+            // In streaming mode, start listening immediately
+            if (isStreamingMode) {
+                setIsListening(true);
+                console.log('🎤 Streaming mode: Voice detection active, waiting for voice...');
+            }
             // Ensure AudioContext is resumed on user gesture for autoplay policies
             if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
                 try {
@@ -299,12 +485,146 @@ export function VoiceConversation({ onEndSession }) {
             }
             
             // Start WebSocket conversation
+            if (!socketRef.current) {
+                // Initialize socket if not already initialized
+                const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
+                socketRef.current = io(SERVER_URL);
+                
+                // Set up event handlers
+                socketRef.current.on('connect', () => {
+                    console.log('🔌 Socket connected');
+                    setIsConnected(true);
+                });
+                
+                socketRef.current.on('voice-response', (data) => {
+                    handleVoiceResponse(data);
+                });
+                
+                socketRef.current.on('voice-error', (error) => {
+                    console.error('❌ Voice error:', error);
+                    setIsProcessing(false);
+                });
+            }
+            
+            // Ensure socket is connected before sending
+            if (!socketRef.current) {
+                throw new Error('Socket.io connection not initialized');
+            }
+            
+            // Wait for socket connection if not already connected
+            if (!socketRef.current.connected) {
+                console.log('⏳ Waiting for socket connection...');
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Socket connection timeout after 5 seconds'));
+                    }, 5000);
+                    
+                    socketRef.current.once('connect', () => {
+                        clearTimeout(timeout);
+                        console.log('✅ Socket connected, proceeding...');
+                        resolve();
+                    });
+                    
+                    socketRef.current.once('connect_error', (error) => {
+                        clearTimeout(timeout);
+                        reject(new Error(`Socket connection failed: ${error.message}`));
+                    });
+                });
+            }
+            
+            console.log('📤 Sending start request to server...');
             socketRef.current.emit('voice-conversation', { type: 'start' });
             
         } catch (error) {
             console.error('❌ Error accessing microphone:', error);
-            alert('Error accessing microphone. Please check your permissions.');
+            
+            // Handle different error types with detailed instructions
+            let errorMessage = '';
+            let detailedInstructions = '';
+            
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                errorMessage = 'Microphone permission was denied';
+                detailedInstructions = 'To fix this:\n\n' +
+                    '1. Click the lock icon (🔒) or info icon (ℹ️) in your browser address bar\n' +
+                    '2. Find "Microphone" in the permissions list\n' +
+                    '3. Change it from "Block" to "Allow"\n' +
+                    '4. Reload this page (F5 or Ctrl+R)\n' +
+                    '5. Click "Start Voice Conversation" again\n\n' +
+                    'Alternative: Go to browser Settings → Privacy → Site Settings → Microphone → Add this site to allowed list';
+            } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                errorMessage = 'No microphone found';
+                detailedInstructions = 'Please:\n\n' +
+                    '1. Connect a microphone to your computer\n' +
+                    '2. Make sure it\'s properly plugged in\n' +
+                    '3. Check your system settings to verify the microphone is detected\n' +
+                    '4. Try again';
+            } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                errorMessage = 'Microphone is being used by another application';
+                detailedInstructions = 'Please:\n\n' +
+                    '1. Close other applications using the microphone:\n' +
+                    '   - Zoom, Teams, Skype, Discord\n' +
+                    '   - Other browser tabs with video/audio\n' +
+                    '   - Screen recording software\n' +
+                    '2. Wait a few seconds\n' +
+                    '3. Try again';
+            } else if (error.name === 'OverconstrainedError' || error.name === 'ConstraintNotSatisfiedError') {
+                errorMessage = 'Microphone settings could not be satisfied';
+                detailedInstructions = 'Please:\n\n' +
+                    '1. Try a different microphone\n' +
+                    '2. Check your microphone settings in system preferences\n' +
+                    '3. Make sure the microphone is not muted\n' +
+                    '4. Try again';
+            } else if (error.message && error.message.includes('not supported')) {
+                errorMessage = 'Browser not supported';
+                detailedInstructions = 'Please use a modern browser:\n\n' +
+                    '✅ Chrome (recommended)\n' +
+                    '✅ Firefox\n' +
+                    '✅ Edge\n' +
+                    '✅ Safari (Mac)\n\n' +
+                    'Make sure your browser is up to date.';
+            } else {
+                errorMessage = `Error: ${error.message || error.name || 'Unknown error'}`;
+                detailedInstructions = 'Please try:\n\n' +
+                    '1. Reload the page (F5 or Ctrl+R)\n' +
+                    '2. Check your browser console for more details (F12)\n' +
+                    '3. Make sure your browser is up to date\n' +
+                    '4. Try a different browser';
+            }
+            
+            setCurrentMessage(`❌ ${errorMessage}. Please check the instructions below.`);
+            setIsConnected(false);
+            
+            // Show detailed error dialog with instructions
+            setTimeout(() => {
+                alert(`${errorMessage}\n\n${detailedInstructions}`);
+            }, 100);
         }
+    };
+    
+    // Check microphone permissions before starting (non-blocking)
+    const checkMicrophonePermission = async () => {
+        // Check if getUserMedia is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('getUserMedia is not supported in this browser. Please use a modern browser like Chrome, Firefox, or Edge.');
+        }
+        
+        // Try to query permissions (if supported) - this is just informational
+        if (navigator.permissions && navigator.permissions.query) {
+            try {
+                const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+                console.log('🎤 Microphone permission status:', permissionStatus.state);
+                
+                if (permissionStatus.state === 'denied') {
+                    console.warn('⚠️ Microphone permission is denied');
+                    // Don't throw - let getUserMedia handle it with better error message
+                }
+            } catch (permError) {
+                // Permission query not supported or failed, continue anyway
+                console.log('ℹ️ Could not query permissions (this is normal in some browsers):', permError.message);
+            }
+        }
+        
+        return true;
     };
 
     const setupVoiceActivityDetection = (stream) => {
@@ -325,29 +645,122 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const detectVoiceActivity = () => {
-        if (!analyserRef.current) return;
+        if (!analyserRef.current) {
+            console.warn('⚠️ Analyser not available for voice detection');
+            return;
+        }
+        
+        // Cancel any existing detection loop
+        if (voiceDetectionRef.current) {
+            cancelAnimationFrame(voiceDetectionRef.current);
+        }
         
         const bufferLength = analyserRef.current.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
+        let silenceCount = 0;
+        let recordingStartTime = null; // Track when recording started for max time limit
+        const SILENCE_THRESHOLD_FRAMES = 8; // Stop after 8 frames of silence (~0.2-0.3 seconds)
         
         const checkVoiceActivity = () => {
+            if (!analyserRef.current) {
+                return; // Stop if analyser is gone
+            }
+            
             analyserRef.current.getByteFrequencyData(dataArray);
             
             // Calculate average volume
             const average = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength;
-            const threshold = 30; // Adjust this value based on testing
             
-            const isVoiceActive = average > threshold;
+            // Lower threshold for better sensitivity (adjust based on testing)
+            const threshold = 20; // Lowered from 30 for better detection
+            
+            // Calculate peak volume for better detection
+            const peak = Math.max(...dataArray);
+            const isVoiceActive = average > threshold || peak > 40;
+            
             setVoiceActivity(isVoiceActive);
             
-            // If voice detected and not already recording, start streaming
-            if (isVoiceActive && !isRecording && !isPlaying) {
-                startStreamingRecording();
+            // Always automatically start recording when voice is detected (streaming mode only)
+            if (sessionId) {
+                if (isVoiceActive && !isRecording && !isPlaying) {
+                    console.log('🎤 Voice detected, starting streaming recording...', { average, peak });
+                    silenceCount = 0;
+                    recordingStartTime = Date.now(); // Track recording start time
+                    startStreamingRecording();
+                } else if (!isVoiceActive && isRecording) {
+                    // Count silence frames - very quick response (shorter wait)
+                    silenceCount++;
+                    // Much reduced threshold for faster response (~0.2-0.3 seconds of silence)
+                    const SILENCE_FRAMES_TO_STOP = 8; // ~0.2-0.3 seconds at 60fps for very quick response
+                    
+                    // Stop recording after silence threshold
+                    if (silenceCount >= SILENCE_FRAMES_TO_STOP) {
+                        console.log('🔇 Silence detected, stopping recording and sending audio immediately...', { 
+                            silenceFrames: silenceCount,
+                            audioChunks: audioChunksRef.current.length 
+                        });
+                        silenceCount = 0;
+                        
+                        if (mediaRecorderRef.current && isRecording) {
+                            try {
+                                // Request final data immediately before stopping
+                                if (mediaRecorderRef.current.state === 'recording') {
+                                    mediaRecorderRef.current.requestData();
+                                }
+                                
+                                // Stop the recorder immediately - this will trigger onstop which sends the audio
+                                mediaRecorderRef.current.stop();
+                                setIsRecording(false);
+                                setIsProcessing(true); // Show processing state immediately
+                                setIsListening(true); // Keep listening for next voice
+                                
+                                console.log('✅ Recording stopped, sending audio to server immediately...');
+                            } catch (e) {
+                                console.error('❌ Error stopping recording:', e);
+                                setIsRecording(false);
+                                setIsProcessing(false);
+                            }
+                        }
+                    }
+                } else if (isVoiceActive && isRecording) {
+                    // Reset silence counter when voice is active
+                    silenceCount = 0;
+                    
+                    // Add maximum recording time limit (10 seconds) to prevent infinite recording
+                    const MAX_RECORDING_TIME = 10000; // 10 seconds
+                    if (!recordingStartTime) {
+                        recordingStartTime = Date.now();
+                    } else if (Date.now() - recordingStartTime > MAX_RECORDING_TIME) {
+                        console.log('⏱️ Maximum recording time reached, stopping automatically...');
+                        silenceCount = 0;
+                        
+                        if (mediaRecorderRef.current && isRecording) {
+                            try {
+                                if (mediaRecorderRef.current.state === 'recording') {
+                                    mediaRecorderRef.current.requestData();
+                                }
+                                mediaRecorderRef.current.stop();
+                                setIsRecording(false);
+                                setIsProcessing(true);
+                                setIsListening(true);
+                                recordingStartTime = null;
+                                console.log('✅ Recording stopped due to max time limit');
+                            } catch (e) {
+                                console.error('❌ Error stopping recording:', e);
+                                setIsRecording(false);
+                                setIsProcessing(false);
+                                recordingStartTime = null;
+                            }
+                        }
+                    }
+                }
             }
             
+            // Continue detection loop
             voiceDetectionRef.current = requestAnimationFrame(checkVoiceActivity);
         };
         
+        console.log('🎤 Starting voice activity detection...');
         checkVoiceActivity();
     };
 
@@ -365,20 +778,51 @@ export function VoiceConversation({ onEndSession }) {
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
                     audioChunksRef.current.push(event.data);
-                    // Send audio chunks immediately for streaming
+                    // Always send chunks immediately for faster response (streaming mode)
                     sendStreamingAudio(event.data);
                 }
             };
             
-            mediaRecorder.onstop = () => {
-                // Final audio processing
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                sendAudioToServer(audioBlob);
+            mediaRecorder.onstop = async () => {
+                console.log('🛑 MediaRecorder stopped, processing audio immediately...', {
+                    chunks: audioChunksRef.current.length,
+                    totalSize: audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0)
+                });
+                
+                // Streaming chunks are already being sent, but we should still send final audio if substantial
+                if (audioChunksRef.current.length > 0) {
+                    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                    
+                    // Only send final audio if it's substantial (not just a tiny chunk)
+                    // Streaming chunks are already being processed, so this is just for completeness
+                    if (audioBlob.size > 2000) { // At least 2KB - substantial audio
+                        console.log('📤 Sending final audio blob to server for processing...', { 
+                            size: audioBlob.size,
+                            type: audioBlob.type 
+                        });
+                        
+                        // Send audio to server for processing
+                        sendAudioToServer(audioBlob);
+                    } else {
+                        console.log('ℹ️ Audio blob small, streaming chunks already sent - skipping final send');
+                        // Processing state is already set by streaming chunks
+                    }
+                    
+                    // Clear chunks for next recording
+                    audioChunksRef.current = [];
+                } else {
+                    console.warn('⚠️ No audio chunks to send');
+                    setIsProcessing(false);
+                }
+                
+                // Always keep listening (streaming mode)
+                setIsListening(true);
             };
             
-            mediaRecorder.start(500); // Collect data every 500ms for faster streaming
+            mediaRecorder.start(200); // Collect data every 200ms for even faster streaming and quicker response
             setIsRecording(true);
             setIsListening(true);
+            console.log('🎤 Recording started in streaming mode');
             
         } catch (error) {
             console.error('❌ Error starting streaming recording:', error);
@@ -386,19 +830,83 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const sendStreamingAudio = (audioData) => {
-        if (!sessionId) return;
+        if (!sessionId) {
+            console.warn('⚠️ No session ID for streaming audio');
+            return;
+        }
+        
+        if (!audioData || audioData.size === 0) {
+            return; // Skip empty chunks
+        }
+        
+        // Log when audio is being sent for debugging
+        console.log('📤 Sending streaming audio chunk immediately...', {
+            size: audioData.size,
+            type: audioData.type,
+            timestamp: new Date().toISOString()
+        });
         
         const reader = new FileReader();
         reader.onload = () => {
-            const base64Audio = reader.result.split(',')[1];
-            
-            // Send streaming audio chunk
-            socketRef.current.emit('voice-conversation', {
-                type: 'streaming-audio',
-                audioData: base64Audio,
-                sessionId: sessionId
-            });
+            try {
+                const base64Audio = reader.result.split(',')[1];
+                
+                if (!base64Audio) {
+                    console.warn('⚠️ Failed to convert streaming audio to base64');
+                    return;
+                }
+                
+                // Send streaming audio chunk immediately for faster response
+                if (socketRef.current && socketRef.current.connected) {
+                    socketRef.current.emit('voice-conversation', {
+                        type: 'streaming-audio',
+                        audioData: base64Audio,
+                        sessionId: sessionId
+                    });
+                    
+                    // Track when audio was sent
+                    lastAudioSentTimeRef.current = Date.now();
+                    
+                    // Set processing state when we start sending chunks
+                    if (!isProcessing) {
+                        setIsProcessing(true);
+                        
+                        // Set timeout to force stop if no response after 15 seconds
+                        if (processingTimeoutRef.current) {
+                            clearTimeout(processingTimeoutRef.current);
+                        }
+                        processingTimeoutRef.current = setTimeout(() => {
+                            console.error('⏱️ Timeout: No response from server after 15 seconds');
+                            setCurrentMessage('⚠️ No response from server. Please try speaking again or restart the session.');
+                            setIsProcessing(false);
+                            setIsRecording(false);
+                            setIsListening(true);
+                            
+                            // Force stop recording if still recording
+                            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                                try {
+                                    mediaRecorderRef.current.stop();
+                                } catch (e) {
+                                    console.error('❌ Error force stopping recording:', e);
+                                }
+                            }
+                        }, 15000); // 15 second timeout
+                    }
+                } else {
+                    console.error('❌ Socket not available or not connected for streaming audio');
+                    setCurrentMessage('❌ Connection lost. Please refresh the page and try again.');
+                    setIsProcessing(false);
+                    setIsRecording(false);
+                }
+            } catch (error) {
+                console.error('❌ Error sending streaming audio:', error);
+            }
         };
+        
+        reader.onerror = (error) => {
+            console.error('❌ Error reading streaming audio:', error);
+        };
+        
         reader.readAsDataURL(audioData);
     };
 
@@ -450,20 +958,67 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const sendAudioToServer = (audioBlob) => {
+        if (!sessionId) {
+            console.error('❌ No session ID, cannot send audio');
+            setIsProcessing(false);
+            return;
+        }
+        
+        // Check if blob is valid
+        if (!audioBlob || audioBlob.size === 0) {
+            console.warn('⚠️ Audio blob is empty, not sending');
+            setIsProcessing(false);
+            return;
+        }
+        
+        console.log('📤 Preparing to send audio to server...', {
+            size: audioBlob.size,
+            type: audioBlob.type,
+            sessionId: sessionId
+        });
+        
         // Convert blob to base64 for transmission
         const reader = new FileReader();
+        
         reader.onload = () => {
-            const base64Audio = reader.result.split(',')[1];
-            
-            setIsProcessing(true);
-            
-            // Send audio to server
-            socketRef.current.emit('voice-conversation', {
-                type: 'audio-chunk',
-                audioData: base64Audio,
-                sessionId: sessionId
-            });
+            try {
+                const base64Audio = reader.result.split(',')[1];
+                
+                if (!base64Audio) {
+                    console.error('❌ Failed to convert audio to base64');
+                    setIsProcessing(false);
+                    return;
+                }
+                
+                console.log('✅ Audio converted to base64, sending to server...', {
+                    base64Length: base64Audio.length
+                });
+                
+                setIsProcessing(true);
+                
+                // Send audio to server
+                if (socketRef.current && socketRef.current.connected) {
+                    socketRef.current.emit('voice-conversation', {
+                        type: 'audio-chunk',
+                        audioData: base64Audio,
+                        sessionId: sessionId
+                    });
+                    console.log('✅ Audio sent to server via socket');
+                } else {
+                    console.error('❌ Socket not available or not connected');
+                    setIsProcessing(false);
+                }
+            } catch (error) {
+                console.error('❌ Error processing audio:', error);
+                setIsProcessing(false);
+            }
         };
+        
+        reader.onerror = (error) => {
+            console.error('❌ Error reading audio blob:', error);
+            setIsProcessing(false);
+        };
+        
         reader.readAsDataURL(audioBlob);
     };
 
@@ -500,7 +1055,7 @@ export function VoiceConversation({ onEndSession }) {
         setIsRecording(false);
         setIsListening(false);
         setIsProcessing(false);
-        setIsStreamingMode(false);
+        // Always keep streaming mode enabled
         setVoiceActivity(false);
     };
 
@@ -508,40 +1063,67 @@ export function VoiceConversation({ onEndSession }) {
         <div className="space-y-6">
             {/* Connection Status */}
             <div className="flex items-center justify-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'} ${isConnected ? 'animate-pulse' : ''}`}></div>
                 <span className="text-sm text-slate-600">
-                    {isConnected ? 'Connected to voice server' : 'Connecting...'}
+                    {isConnected 
+                        ? (useRealtime && sessionId === 'realtime'
+                            ? '✅ Connected via Realtime API'
+                            : socketRef.current?.connected
+                                ? '✅ Connected to voice server'
+                                : '⚠️ Connection issue - check console')
+                        : 'Connecting...'}
                 </span>
             </div>
 
-            {/* Streaming Mode Toggle */}
-            <div className="flex items-center justify-center space-x-3">
-                <span className="text-sm text-slate-600">Mode:</span>
-                <button
-                    onClick={() => setIsStreamingMode(!isStreamingMode)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                        isStreamingMode 
-                            ? 'bg-green-100 text-green-700 border border-green-200' 
-                            : 'bg-gray-100 text-gray-700 border border-gray-200'
-                    }`}
-                >
-                    {isStreamingMode ? '🎙️ Live Streaming' : '⏸️ Manual'}
-                </button>
-                <span className="text-xs text-slate-500">
-                    {isStreamingMode ? 'Speak naturally - AI detects your voice' : 'Click to speak'}
-                </span>
-            </div>
+            {/* Mode Indicator - Always Streaming */}
+            {sessionId && (
+                <div className="flex flex-col items-center space-y-2">
+                    <div className="flex items-center justify-center space-x-3">
+                        <span className="text-sm text-slate-600">Mode:</span>
+                        {useRealtime && sessionId === 'realtime' ? (
+                            // Realtime API mode
+                            <div className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+                                🚀 Realtime API (Best Experience)
+                            </div>
+                        ) : (
+                            // Streaming mode only
+                            <div className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                                🎙️ Live Streaming
+                            </div>
+                        )}
+                        <span className="text-xs text-slate-500">
+                            {useRealtime && sessionId === 'realtime' 
+                                ? 'AI understands and responds in real-time' 
+                                : 'Speak naturally - AI detects your voice automatically'}
+                        </span>
+                    </div>
+                </div>
+            )}
 
             {/* Current Message Display */}
             {currentMessage && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-slate-200 p-6 shadow-sm">
+                <div className={`bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-slate-200 p-6 shadow-sm ${isPlaying ? 'ring-2 ring-green-400' : ''}`}>
                     <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                            <span className="text-blue-600 text-lg">🎙️</span>
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isPlaying ? 'bg-green-100 animate-pulse' : 'bg-blue-100'}`}>
+                            <span className={`text-lg ${isPlaying ? 'text-green-600' : 'text-blue-600'}`}>
+                                {isPlaying ? '🔊' : '🎙️'}
+                            </span>
                         </div>
                         <div className="flex-1">
-                            <h4 className="text-sm font-semibold text-slate-800 mb-2">AI Examiner:</h4>
+                            <div className="flex items-center gap-2 mb-2">
+                                <h4 className="text-sm font-semibold text-slate-800">AI Examiner:</h4>
+                                {isPlaying && (
+                                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">
+                                        🔊 Speaking...
+                                    </span>
+                                )}
+                            </div>
                             <p className="text-slate-700 leading-relaxed">{currentMessage}</p>
+                            {!isPlaying && !isProcessing && (
+                                <p className="text-xs text-slate-500 mt-2 italic">
+                                    (Audio response will play automatically)
+                                </p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -601,12 +1183,27 @@ export function VoiceConversation({ onEndSession }) {
                 </div>
             </div>
 
+            {/* Microphone Permission Help */}
+            {currentMessage && currentMessage.includes('Microphone permission') && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
+                    <h4 className="font-semibold text-yellow-800 mb-2">📋 How to Enable Microphone Access:</h4>
+                    <ol className="list-decimal list-inside space-y-1 text-sm text-yellow-700">
+                        <li>Look for the lock icon (🔒) or info icon (ℹ️) in your browser's address bar</li>
+                        <li>Click on it to open site permissions</li>
+                        <li>Find "Microphone" in the list</li>
+                        <li>Change it from "Block" to "Allow"</li>
+                        <li>Reload this page (F5 or Ctrl+R)</li>
+                        <li>Click "Start Voice Conversation" again</li>
+                    </ol>
+                </div>
+            )}
+
             {/* Voice Controls */}
             <div className="flex flex-col items-center space-y-4">
                 {!sessionId ? (
                     <button
                         onClick={startVoiceSession}
-                        disabled={!isConnected}
+                        disabled={!isConnected && !useRealtime}
                         className="px-8 py-4 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
                     >
                         <span className="text-2xl">🎙️</span>
@@ -614,40 +1211,17 @@ export function VoiceConversation({ onEndSession }) {
                     </button>
                 ) : (
                     <div className="flex flex-col items-center space-y-4">
-                        {isStreamingMode ? (
-                            <div className="text-center">
-                                <div className="text-lg font-semibold text-slate-700 mb-2">
-                                    🎙️ Live Streaming Mode Active
-                                </div>
-                                <div className="text-sm text-slate-600 mb-4">
-                                    Just speak naturally - the AI will detect your voice and respond automatically
-                                </div>
-                                <div className={`px-4 py-2 rounded-lg ${voiceActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                    {voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'}
-                                </div>
+                        <div className="text-center">
+                            <div className="text-lg font-semibold text-slate-700 mb-2">
+                                🎙️ Live Streaming Mode Active
                             </div>
-                        ) : (
-                            <div className="flex items-center space-x-4">
-                                {!isRecording ? (
-                                    <button
-                                        onClick={startRecording}
-                                        disabled={isProcessing || isPlaying}
-                                        className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-                                    >
-                                        <span className="text-xl">🎤</span>
-                                        <span>Start Speaking</span>
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={stopRecording}
-                                        className="px-6 py-3 bg-gray-600 text-white rounded-lg font-semibold hover:bg-gray-700 flex items-center space-x-2"
-                                    >
-                                        <span className="text-xl">⏹️</span>
-                                        <span>Stop Speaking</span>
-                                    </button>
-                                )}
+                            <div className="text-sm text-slate-600 mb-4">
+                                Just speak naturally - the AI will detect your voice and respond automatically
                             </div>
-                        )}
+                            <div className={`px-4 py-2 rounded-lg ${voiceActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                {voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'}
+                            </div>
+                        </div>
                         
                         <button
                             onClick={endVoiceSession}
