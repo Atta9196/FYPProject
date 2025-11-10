@@ -22,7 +22,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "node-fetch": "^2.7.0",
-    "openai": "^6.6.0",
+    "openai": "^6.8.1",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "ws": "^8.18.3"

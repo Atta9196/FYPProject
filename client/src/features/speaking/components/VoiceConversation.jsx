@@ -12,6 +12,7 @@ export function VoiceConversation({ onEndSession }) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [userTranscript, setUserTranscript] = useState('');
+    const [realtimeTranscript, setRealtimeTranscript] = useState(''); // Real-time transcription as user speaks
     const [isStreamingMode, setIsStreamingMode] = useState(true); // Always use streaming mode
     const [voiceActivity, setVoiceActivity] = useState(false);
     
@@ -142,6 +143,22 @@ export function VoiceConversation({ onEndSession }) {
                 console.log('🔊 Using TTS for AI response...');
                 speakWithSpeechSynthesis(data.message);
             }
+        } else if (data.type === 'streaming-chunk') {
+            // Handle realtime streaming chunks - accumulate and display as they arrive
+            console.log('🔄 Received streaming chunk:', data.chunk);
+            
+            // Update current message with accumulated chunks
+            setCurrentMessage(prev => {
+                const newMessage = (prev || '') + data.chunk;
+                return newMessage;
+            });
+            
+            // Update user transcript if provided
+            if (data.userTranscript) {
+                setUserTranscript(data.userTranscript);
+            }
+            
+            // Don't add to history yet - wait for complete response
         } else if (data.type === 'streaming-response') {
             // Clear processing timeout since we got a response
             if (processingTimeoutRef.current) {
@@ -149,7 +166,7 @@ export function VoiceConversation({ onEndSession }) {
                 processingTimeoutRef.current = null;
             }
             
-            console.log('✅ Received streaming response from server:', data.message);
+            console.log('✅ Received complete streaming response from server:', data.message);
             
             setCurrentMessage(data.message);
             setUserTranscript(data.userTranscript || '');
@@ -397,24 +414,45 @@ export function VoiceConversation({ onEndSession }) {
                         audioEl: realtimeAudioRef.current,
                         onConnected: () => {
                             setIsConnected(true);
-                            setCurrentMessage('🎧 Realtime voice connected! The AI will greet you and start the conversation. Just speak naturally - the AI will listen and respond intelligently to what you say.');
+                            setCurrentMessage('🎧 Real-time voice connected! This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking, and the AI will stop and listen to you.');
                             setIsStreamingMode(true);
                             setIsListening(true);
+                            setIsRecording(false); // Not recording in Realtime mode - it's true bidirectional streaming
                             
                             // Add to conversation history
                             setConversationHistory([{
                                 role: 'examiner',
-                                content: '🎧 Voice session connected. The AI will greet you and start the conversation. Speak naturally and the AI will understand and respond to your questions and statements.',
+                                content: '🎧 Real-time voice conversation started! This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking.',
                                 timestamp: new Date()
                             }]);
                             
-                            console.log('✅ Realtime API connected successfully');
+                            console.log('✅ Realtime API connected successfully - true bidirectional voice streaming active');
                         },
                         onError: (e) => {
                             console.error('❌ Realtime start failed:', e);
                             setIsConnected(false);
                             setCurrentMessage(`❌ Connection failed: ${e.message}. Falling back to Socket.io mode...`);
                             throw e; // Re-throw to be caught by outer catch
+                        },
+                        onTranscriptionUpdate: (data) => {
+                            // Handle real-time transcription updates
+                            console.log('📝 Real-time transcription update:', data);
+                            if (data.transcript) {
+                                // Always update real-time transcript as user speaks
+                                setRealtimeTranscript(data.transcript);
+                                
+                                // If transcription is complete, also save to userTranscript
+                                if (data.isComplete) {
+                                    setUserTranscript(data.transcript);
+                                    // Keep realtime transcript visible for a moment, then clear
+                                    setTimeout(() => {
+                                        setRealtimeTranscript('');
+                                    }, 2000);
+                                }
+                            } else if (data.isComplete) {
+                                // If complete but no transcript, clear realtime
+                                setRealtimeTranscript('');
+                            }
                         },
                         maxDurationMs: 10 * 60 * 1000 // 10 minutes
                     });
@@ -1129,8 +1167,35 @@ export function VoiceConversation({ onEndSession }) {
                 </div>
             )}
 
-            {/* User Transcript Display */}
-            {userTranscript && (
+            {/* Real-time Transcription Display - Shows as user speaks */}
+            {realtimeTranscript && (
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-300 p-4 shadow-md animate-pulse">
+                    <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-200 flex items-center justify-center animate-pulse">
+                            <span className="text-blue-600 text-sm">🎤</span>
+                        </div>
+                        <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                                <h4 className="text-xs font-semibold text-blue-800">Speaking...</h4>
+                                <div className="flex space-x-1">
+                                    <div className="w-1 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                                    <div className="w-1 h-4 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.1s'}}></div>
+                                    <div className="w-1 h-2 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                                    <div className="w-1 h-3 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.3s'}}></div>
+                                    <div className="w-1 h-4 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
+                                </div>
+                            </div>
+                            <div className="bg-white rounded-lg p-3 border border-blue-200">
+                                <p className="text-slate-800 text-sm leading-relaxed font-medium">"{realtimeTranscript}"</p>
+                            </div>
+                            <p className="text-xs text-blue-600 mt-2 italic">Real-time transcription...</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* User Transcript Display - Shows final transcript after speaking */}
+            {userTranscript && !realtimeTranscript && (
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-slate-200 p-4 shadow-sm">
                     <div className="flex items-start gap-3">
                         <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
@@ -1213,13 +1278,22 @@ export function VoiceConversation({ onEndSession }) {
                     <div className="flex flex-col items-center space-y-4">
                         <div className="text-center">
                             <div className="text-lg font-semibold text-slate-700 mb-2">
-                                🎙️ Live Streaming Mode Active
+                                {useRealtime && realtimeRef.current ? '📞 Real-Time Voice Call Active' : '🎙️ Live Streaming Mode Active'}
                             </div>
                             <div className="text-sm text-slate-600 mb-4">
-                                Just speak naturally - the AI will detect your voice and respond automatically
+                                {useRealtime && realtimeRef.current ? 
+                                    'This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking.' :
+                                    'Just speak naturally - the AI will detect your voice and respond automatically'
+                                }
                             </div>
                             <div className={`px-4 py-2 rounded-lg ${voiceActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                {voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'}
+                                {useRealtime && realtimeRef.current ? (
+                                    isPlaying ? '🔊 AI is speaking...' : 
+                                    voiceActivity ? '🎤 You are speaking...' : 
+                                    '👂 Listening... (Speak naturally - AI will respond automatically)'
+                                ) : (
+                                    voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'
+                                )}
                             </div>
                         </div>
                         
@@ -1237,10 +1311,21 @@ export function VoiceConversation({ onEndSession }) {
             {/* Status Indicators */}
             <div className="flex justify-center space-x-6">
                 <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm text-slate-600">
-                        {isRecording ? 'Recording...' : 'Not Recording'}
-                    </span>
+                    {useRealtime && realtimeRef.current ? (
+                        <>
+                            <div className={`w-3 h-3 rounded-full ${isPlaying ? 'bg-blue-500 animate-pulse' : voiceActivity ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                            <span className="text-sm text-slate-600">
+                                {isPlaying ? 'AI Speaking...' : voiceActivity ? 'You Speaking...' : 'Listening...'}
+                            </span>
+                        </>
+                    ) : (
+                        <>
+                            <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                            <span className="text-sm text-slate-600">
+                                {isRecording ? 'Recording...' : 'Not Recording'}
+                            </span>
+                        </>
+                    )}
                 </div>
                 
                 <div className="flex items-center space-x-2">

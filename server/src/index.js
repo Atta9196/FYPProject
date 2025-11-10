@@ -64,6 +64,8 @@ app.get("/health", (_req, res) => {
       env: {
         jwtSecret: Boolean(process.env.JWT_SECRET),
         firebaseWebApiKey: Boolean(process.env.FIREBASE_WEB_API_KEY),
+        openaiApiKey: Boolean(process.env.OPENAI_API_KEY),
+        openaiApiKeyPrefix: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 7) + "..." : "not set",
         firebaseAdmin: {
           projectId: Boolean(process.env.FIREBASE_PROJECT_ID),
           clientEmail: Boolean(process.env.FIREBASE_CLIENT_EMAIL),
@@ -72,6 +74,69 @@ app.get("/health", (_req, res) => {
       },
     });
   });
+
+// ✅ Test OpenAI API endpoint
+app.get("/test-openai", async (_req, res) => {
+  try {
+    console.log("🧪 Testing OpenAI API...");
+    console.log("🔑 API Key exists:", Boolean(process.env.OPENAI_API_KEY));
+    console.log("🔑 API Key prefix:", process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 7) + "..." : "not set");
+    
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        error: "OPENAI_API_KEY not configured",
+        message: "Please set OPENAI_API_KEY in your .env file"
+      });
+    }
+
+    // Test a simple API call
+    const testResponse = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: "Say 'Hello, API test successful!' in one sentence."
+        }
+      ],
+      max_tokens: 50
+    });
+
+    const message = testResponse.choices[0].message.content;
+    const usage = testResponse.usage;
+
+    console.log("✅ OpenAI API test successful!");
+    console.log("📊 Usage:", JSON.stringify(usage, null, 2));
+
+    res.json({
+      success: true,
+      message: message,
+      usage: usage,
+      apiKeyConfigured: true,
+      apiKeyPrefix: process.env.OPENAI_API_KEY.substring(0, 7) + "..."
+    });
+  } catch (error) {
+    console.error("❌ OpenAI API test failed:", error);
+    console.error("❌ Error details:", {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      type: error.type
+    });
+
+    res.status(500).json({
+      success: false,
+      error: "OpenAI API test failed",
+      message: error.message,
+      details: {
+        status: error.status,
+        code: error.code,
+        type: error.type
+      },
+      apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+      apiKeyPrefix: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 7) + "..." : "not set"
+    });
+  }
+});
   
 // Example: auth routes (keep your existing)
 const authRoutes = require("./routes/authRoutes");
@@ -88,6 +153,20 @@ app.use("/api/voice", voiceRoutes);
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
 const fs = require('fs');
+
+// Initialize OpenAI client with validation
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ WARNING: OPENAI_API_KEY is not set in environment variables!");
+  console.error("❌ OpenAI features will not work. Please set OPENAI_API_KEY in your .env file.");
+} else {
+  console.log("✅ OpenAI API Key configured");
+  console.log("🔑 API Key prefix:", process.env.OPENAI_API_KEY.substring(0, 7) + "...");
+  
+  // Validate API key format
+  if (!process.env.OPENAI_API_KEY.startsWith('sk-')) {
+    console.warn("⚠️ WARNING: API key doesn't start with 'sk-'. This might be incorrect.");
+  }
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -128,38 +207,29 @@ io.on('connection', (socket) => {
         
         try {
           const greeting = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
+            model: "gpt-4o-mini", // Cost-effective for conversations
             messages: [
               {
                 role: "system",
-                content: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session. 
+                content: `IELTS examiner. Natural conversation practice.
 
-Your personality:
-- Be warm, encouraging, and genuinely interested
-- Ask follow-up questions that build naturally on responses
-- Show curiosity about the candidate's experiences and opinions
-- Occasionally provide gentle, constructive feedback
-- Keep the conversation flowing like a real IELTS interview
-- Mix Part 1 and Part 3 style questions naturally
-- Be conversational, not robotic or scripted
+Personality: Warm, encouraging, genuinely interested.
 
-Patience & Support:
-- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
-- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
-- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
-- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
-- NEVER pressure or rush the user - this is practice, they need time to think
-- Be supportive and encouraging, never accusatory
+Rules:
+- Ask follow-ups based on responses
+- Mix Part 1 & 3 questions naturally
+- Be conversational, not robotic
+- Be patient and supportive
 
-Start with a warm, personalized greeting and ask an opening question that will help you understand the candidate better. Make it feel like meeting a real person, not taking a test.`
+Start with warm greeting + opening question.`
               },
               {
                 role: "user",
-                content: "Start the IELTS speaking practice session with a natural, engaging opening."
+                content: "Start IELTS practice with engaging opening."
               }
             ],
-            max_tokens: 200,
-            temperature: 0.8
+            max_tokens: 150, // Reduced from 200 - greeting should be concise
+            temperature: 0.7 // Slightly lower for more focused responses
           });
 
           const greetingMessage = greeting.choices[0].message.content.trim();
@@ -346,73 +416,43 @@ Start with a warm, personalized greeting and ask an opening question that will h
             
             // Generate quick AI response for streaming
             const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
+            model: "gpt-4o-mini", // Cost-effective for conversations
             messages: [
               {
                 role: "system",
-                content: `You are a professional IELTS Speaking examiner conducting a real-time, streaming conversation practice session.
+                content: `IELTS examiner. Real-time streaming conversation.
 
-CRITICAL: You must READ and UNDERSTAND what the user actually said, then respond SPECIFICALLY to their message. Do NOT use generic phrases like "That's interesting! Can you tell me more about that?" 
+CRITICAL: Read and understand user's message, respond specifically.
 
-Your personality:
-- Be warm, encouraging, and genuinely interested in the candidate
-- Show active listening by referencing SPECIFIC things they mentioned
-- Ask intelligent follow-up questions that are SPECIFIC to what they said
-- Be conversational and natural, like talking to a friend who's also an examiner
+Personality: Warm, encouraging, genuinely interested.
 
-Active Listening & Understanding:
-- READ the user's message carefully and understand what they actually said
-- Respond DIRECTLY to what they mentioned - reference specific details from their answer
-- If they mentioned a job, hobby, place, or experience, ask about THAT specific thing
-- If they asked a question, ANSWER IT directly and clearly
-- If they shared information, acknowledge the SPECIFIC information they shared
-- Show you understood by referencing what they actually said
-- Remember details they mention and reference them later
-- Show genuine curiosity about their responses
+Active Listening:
+- Read message carefully, understand what they said
+- Respond directly to what they mentioned
+- Reference specific details from their answer
+- Remember details and reference them later
 
-Examples of GOOD responses:
-- User: "I work as a software engineer" → "That's great! What programming languages do you use most often in your work?"
-- User: "I like playing football" → "Football is exciting! Do you play in a team or just for fun? What position do you play?"
-- User: "I visited Paris last year" → "Paris is beautiful! What was your favorite part of the trip? Did you visit the Eiffel Tower?"
+Context:
+- Topics: ${session.conversationContext.topicsDiscussed.join(', ') || 'None'}
+- Interests: ${session.conversationContext.candidateInterests.join(', ') || 'None'}
+- Strengths: ${session.conversationContext.strengths.join(', ') || 'None'}
 
-Examples of BAD responses (DO NOT USE):
-- "That's very interesting! Can you tell me more about that?" (too generic)
-- "That's wonderful! What would you recommend?" (doesn't reference what they said)
-- "How fascinating! What made you choose that?" (generic, doesn't show understanding)
-
-Conversation context:
-- Topics discussed: ${session.conversationContext.topicsDiscussed.join(', ') || 'None yet'}
-- Candidate interests: ${session.conversationContext.candidateInterests.join(', ') || 'None yet'}
-- Strengths observed: ${session.conversationContext.strengths.join(', ') || 'None yet'}
-
-Guidelines for streaming:
+Guidelines:
 - Keep responses SHORT (1-2 sentences) but meaningful
-- ALWAYS reference specific things the user mentioned
-- Show you READ and UNDERSTOOD their message
-- Ask SPECIFIC follow-up questions based on what they said
-- If they mentioned a place, ask about that place specifically
-- If they mentioned a job, ask about that job specifically
-- If they mentioned a hobby, ask about that hobby specifically
-- Make the conversation feel natural and flowing
+- ALWAYS reference specific things user mentioned
+- Ask SPECIFIC follow-up questions
+- Be patient and supportive
 
-Patience & Support:
-- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
-- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
-- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
-- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
-- NEVER pressure or rush the user - this is practice, they need time to think
-- Be supportive and encouraging, never accusatory
-
-Remember: You're having a REAL conversation. Read what the user actually said and respond specifically to that. Be patient, encouraging, and supportive. Never rush or pressure the user.`
+Remember: Real conversation. Respond specifically to what they said.`
               },
-              ...session.history.slice(-6), // Keep last 6 messages for better context
+              ...session.history.slice(-5), // Reduced from 6 to save tokens
               {
                 role: "user",
                 content: userMessage
               }
             ],
-            max_tokens: 100, // Shorter responses for streaming
-            temperature: 0.8
+            max_tokens: 120, // Slightly increased from 100 for better quality
+            temperature: 0.7 // Slightly lower for more focused responses
           });
 
             const aiMessage = aiResponse.choices[0].message.content.trim();
@@ -531,64 +571,69 @@ Remember: You're having a REAL conversation. Read what the user actually said an
           // Update conversation context based on user response
           updateConversationContext(session, userMessage);
 
-          // Generate dynamic AI response based on context
-          const aiResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
+          // Generate dynamic AI response based on context with STREAMING enabled
+          console.log('🔄 Starting streaming AI response...');
+          let aiMessage = '';
+          let fullMessage = '';
+          
+          const stream = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // Cost-effective for conversations
             messages: [
               {
                 role: "system",
-                content: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
+                content: `IELTS examiner. Natural conversation practice.
 
-CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the FULL meaning, not just keywords.
+CRITICAL: Listen carefully and respond directly to user's words.
 
-Your personality:
-- Be warm, encouraging, and genuinely interested in the candidate
-- Show active listening by referencing specific things they mentioned
-- Ask intelligent follow-up questions that demonstrate understanding
-- Be conversational and natural, like talking to a friend who's also an examiner
+Personality: Warm, encouraging, genuinely interested.
 
-Active Listening & Understanding:
-- Pay attention to the FULL meaning of what the user says
-- If they ask a question, ANSWER IT directly and clearly
-- If they share information, acknowledge it and build on it naturally
-- Remember details they mention and reference them later
-- Show genuine curiosity about their responses
+Active Listening:
+- Pay attention to FULL meaning, not just keywords
+- Answer questions directly
+- Acknowledge and build on their information
+- Remember details and reference them later
 
-Conversation context:
-- Topics discussed: ${session.conversationContext.topicsDiscussed.join(', ') || 'None yet'}
-- Candidate interests: ${session.conversationContext.candidateInterests.join(', ') || 'None yet'}
-- Strengths observed: ${session.conversationContext.strengths.join(', ') || 'None yet'}
+Context:
+- Topics: ${session.conversationContext.topicsDiscussed.join(', ') || 'None'}
+- Interests: ${session.conversationContext.candidateInterests.join(', ') || 'None'}
+- Strengths: ${session.conversationContext.strengths.join(', ') || 'None'}
 
 Guidelines:
-- Respond to what they ACTUALLY said, not generic templates
-- If they ask "What do you think?", give your opinion naturally
-- Build on their specific responses, showing you understood
-- Ask for more details when appropriate
-- Show genuine interest in their experiences
-- Keep responses conversational and engaging (2-3 sentences max)
-- Make the conversation feel natural and flowing
+- Respond to what they ACTUALLY said
+- Build on their specific responses
+- Keep responses concise (1-2 sentences)
+- Be patient and supportive
 
-Patience & Support:
-- BE VERY PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
-- NEVER say "you have not answered me", "you didn't answer", or any negative phrases about not responding
-- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
-- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
-- NEVER pressure or rush the user - this is practice, they need time to think
-- Be supportive and encouraging, never accusatory
-
-Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`
+Remember: Real conversation. Be patient, encouraging, supportive.`
               },
-              ...session.history.slice(-8), // Keep last 8 messages for better context
+              ...session.history.slice(-6), // Reduced from 8 to save tokens
               {
                 role: "user",
                 content: userMessage
               }
             ],
-            max_tokens: 250,
-            temperature: 0.8
+            max_tokens: 150, // Reduced from 250 - responses should be concise
+            temperature: 0.7, // Slightly lower for more focused responses
+            stream: true // Enable streaming for realtime responses
           });
 
-          const aiMessage = aiResponse.choices[0].message.content.trim();
+          // Stream chunks to client in realtime
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || '';
+            if (content) {
+              fullMessage += content;
+              // Emit each chunk as it arrives for realtime display
+              socket.emit('voice-response', {
+                type: 'streaming-chunk',
+                chunk: content,
+                userTranscript: userMessage,
+                isComplete: false
+              });
+            }
+          }
+
+          aiMessage = fullMessage.trim();
+          console.log('✅ Streaming complete. Full message:', aiMessage);
           
           // Add AI response to history
           session.history.push({ role: 'examiner', content: aiMessage });
@@ -609,8 +654,9 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
           // Clean up temporary file
           fs.unlinkSync(tempFilePath);
 
+          // Emit final complete response with audio
           socket.emit('voice-response', {
-            type: 'ai-response',
+            type: 'streaming-response',
             message: aiMessage,
             audioData: aiAudioBase64,
             userTranscript: userMessage,
@@ -618,7 +664,15 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
           });
           
         } catch (openaiError) {
-          console.log('⚠️ OpenAI API failed for audio processing, using enhanced fallback:', openaiError.message);
+          console.error('❌ OpenAI API failed for audio processing!');
+          console.error('❌ Error details:', {
+            message: openaiError.message,
+            status: openaiError.status,
+            code: openaiError.code,
+            type: openaiError.type,
+            response: openaiError.response?.data || 'No response data'
+          });
+          console.log('⚠️ Using enhanced fallback response');
           
           // Enhanced fallback responses based on conversation context
           const session = conversationSessions.get(data.sessionId);
@@ -673,22 +727,59 @@ Conversation context:
 
 Provide detailed, constructive feedback that feels personal and encouraging.`;
             
-            const summary = await openai.chat.completions.create({
-              model: "gpt-4o-mini",
+            // Use streaming to ensure we capture the full response
+            console.log('🔄 Generating summary with streaming to ensure full response...');
+            const stream = await openai.chat.completions.create({
+              model: "gpt-4o-mini", // Cost-effective for summaries
               messages: [
                 {
                   role: "user",
                   content: summaryPrompt
                 }
               ],
-              max_tokens: 400,
-              temperature: 0.6
+              max_tokens: 700, // Increased to ensure full feedback is captured
+              temperature: 0.4, // Lower for more consistent summaries
+              stream: true // Use streaming to ensure full response
             });
 
-            const feedback = summary.choices[0].message.content.trim();
+            let fullFeedback = '';
+            let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+            
+            // Collect all chunks
+            for await (const chunk of stream) {
+              const content = chunk.choices[0]?.delta?.content || '';
+              if (content) {
+                fullFeedback += content;
+              }
+              // Track token usage if available
+              if (chunk.usage) {
+                tokenUsage = chunk.usage;
+              }
+            }
+
+            const feedback = fullFeedback.trim();
+            
+            // Log full feedback to verify it's complete
+            console.log('📊 Full summary feedback received:', feedback);
+            console.log('📊 Feedback length:', feedback.length, 'characters');
+            console.log('📊 Token usage:', tokenUsage);
+            
+            // Verify feedback is not empty
+            if (!feedback || feedback.length === 0) {
+              throw new Error('Empty feedback received from OpenAI');
+            }
+            
+            // Check if feedback seems complete (ends with proper punctuation or is reasonably long)
+            const lastChar = feedback.trim().slice(-1);
+            const hasProperEnding = ['.', '!', '?'].includes(lastChar);
+            if (!hasProperEnding && feedback.length < 100) {
+              console.warn('⚠️ WARNING: Feedback may be incomplete - doesn\'t end with proper punctuation and is short');
+            }
+            
+            console.log('✅ Summary feedback validated and ready to send');
             
             // Generate speech for feedback
-            console.log('🎵 Generating speech for feedback:', feedback);
+            console.log('🎵 Generating speech for feedback (length:', feedback.length, 'chars)...');
             const speechResponse = await openai.audio.speech.create({
               model: "tts-1",
               voice: "alloy",

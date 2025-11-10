@@ -6,10 +6,11 @@ export function createRealtimeAgent() {
   let micStream = null;
   let remoteAudioEl = null;
   let sessionTimer = null;
+  let dataChannel = null;
 
   const isSupported = () => typeof RTCPeerConnection !== 'undefined';
 
-  const start = async ({ audioEl, onConnected, onError, maxDurationMs } = {}) => {
+  const start = async ({ audioEl, onConnected, onError, maxDurationMs, onTranscriptionUpdate } = {}) => {
     try {
       if (!isSupported()) throw new Error('WebRTC not supported');
 
@@ -69,27 +70,47 @@ export function createRealtimeAgent() {
       let clientSecretValue = null;
       
       if (session.client_secret) {
-        // Direct client_secret
-        clientSecretValue = typeof session.client_secret === 'string' 
-          ? session.client_secret 
-          : session.client_secret?.value || session.client_secret;
+        // Direct client_secret - must have .value property
+        if (typeof session.client_secret === 'string') {
+          // If it's a string, use it directly (legacy format)
+          clientSecretValue = session.client_secret;
+        } else if (session.client_secret.value) {
+          // Prefer .value property (correct format)
+          clientSecretValue = session.client_secret.value;
+        } else {
+          // Fallback to the object itself (shouldn't happen)
+          clientSecretValue = session.client_secret;
+        }
       } else if (session.data?.client_secret) {
         // Nested in data object
-        clientSecretValue = typeof session.data.client_secret === 'string'
-          ? session.data.client_secret
-          : session.data.client_secret?.value || session.data.client_secret;
+        if (typeof session.data.client_secret === 'string') {
+          clientSecretValue = session.data.client_secret;
+        } else if (session.data.client_secret?.value) {
+          clientSecretValue = session.data.client_secret.value;
+        } else {
+          clientSecretValue = session.data.client_secret;
+        }
       }
       
       if (!clientSecretValue) {
         console.error('❌ client_secret not found in session:', {
           hasClientSecret: !!session.client_secret,
           hasData: !!session.data,
-          sessionKeys: Object.keys(session)
+          sessionKeys: Object.keys(session),
+          clientSecretType: typeof session.client_secret,
+          clientSecretValue: session.client_secret?.value ? 'exists' : 'missing'
         });
-        throw new Error('client_secret not found in session response. Check server logs for details.');
+        throw new Error('client_secret.value not found in session response. Check server logs for details.');
       }
       
-      console.log('✅ client_secret found:', clientSecretValue.substring(0, 20) + '...');
+      // Validate it's a string (not an object)
+      if (typeof clientSecretValue !== 'string') {
+        console.error('❌ client_secret.value is not a string:', typeof clientSecretValue, clientSecretValue);
+        throw new Error('client_secret.value must be a string, but got: ' + typeof clientSecretValue);
+      }
+      
+      console.log('✅ client_secret.value found:', clientSecretValue.substring(0, 20) + '...');
+      console.log('✅ client_secret.value length:', clientSecretValue.length);
       
       console.log('✅ Session created:', {
         sessionId: session.id || 'N/A',
@@ -104,13 +125,73 @@ export function createRealtimeAgent() {
       });
 
       // 3) Create data channel for text messages (oai-events)
-      const dataChannel = pc.createDataChannel('oai-events');
+      // Note: OpenAI Realtime API uses this channel to send events (transcriptions, responses, etc.)
+      dataChannel = pc.createDataChannel('oai-events');
       dataChannel.onopen = () => {
         console.log('✅ Data channel opened for text messages');
+        console.log('📡 Data channel ready state:', dataChannel.readyState);
+      };
+      dataChannel.onclose = () => {
+        console.log('⚠️ Data channel closed');
+      };
+      dataChannel.onerror = (error) => {
+        console.error('❌ Data channel error:', error);
       };
       dataChannel.onmessage = (event) => {
-        console.log('📨 Realtime message from AI:', event.data);
-        // Handle text messages from AI if needed
+        try {
+          // Parse JSON event from OpenAI Realtime API
+          const eventData = JSON.parse(event.data);
+          console.log('📨 Realtime event from AI:', eventData);
+          
+          // Handle various transcription event types
+          // OpenAI Realtime API sends different event types for transcription
+          let transcript = null;
+          let isPartial = false;
+          let isComplete = false;
+          
+          // Check for transcript in various possible locations
+          if (eventData.transcript) {
+            transcript = eventData.transcript;
+          } else if (eventData.delta && eventData.delta.transcript) {
+            transcript = eventData.delta.transcript;
+          } else if (eventData.item && eventData.item.input_audio_transcript) {
+            transcript = eventData.item.input_audio_transcript;
+          } else if (eventData.input_audio_transcript) {
+            transcript = eventData.input_audio_transcript;
+          }
+          
+          // Determine if this is a partial or complete transcription
+          if (eventData.type === 'input_audio_buffer_committed') {
+            isComplete = true;
+            isPartial = false;
+          } else if (eventData.type === 'input_audio_buffer_speech_started' || 
+                     eventData.type === 'input_audio_buffer_speech_stopped') {
+            isPartial = true;
+            isComplete = false;
+          } else if (eventData.type === 'conversation_item_input_audio_transcription_completed' ||
+                     eventData.type === 'conversation_item_input_audio_transcription_failed') {
+            isComplete = true;
+            isPartial = false;
+          } else if (eventData.type === 'response.audio_transcript.delta' ||
+                     eventData.type === 'response.audio_transcript.done') {
+            // These are for AI responses, not user input
+            return;
+          }
+          
+          // If we found a transcript, call the callback
+          if (transcript && onTranscriptionUpdate) {
+            console.log('📝 Real-time transcription:', transcript, { isPartial, isComplete });
+            onTranscriptionUpdate({
+              transcript: transcript,
+              isPartial: isPartial,
+              isComplete: isComplete,
+              eventType: eventData.type
+            });
+          }
+        } catch (parseError) {
+          // If not JSON, log as plain text
+          console.log('📨 Realtime message from AI (text):', event.data);
+        }
       };
       dataChannel.onerror = (error) => {
         console.error('❌ Data channel error:', error);
@@ -230,22 +311,15 @@ export function createRealtimeAgent() {
       });
 
       // 7) Send SDP to OpenAI Realtime API
-      // Try with session ID first, then fallback to generic endpoint
-      const sessionId = session.id || session.session_id;
-      let realtimeEndpoint;
-      
-      if (sessionId) {
-        // Use session-specific endpoint if we have session ID
-        realtimeEndpoint = `https://api.openai.com/v1/realtime/sessions/${sessionId}/stream`;
-        console.log('🔗 Connecting to OpenAI Realtime API with session ID:', realtimeEndpoint);
-      } else {
-        // Fallback to generic endpoint
-        realtimeEndpoint = 'https://api.openai.com/v1/realtime/sessions/stream';
-        console.log('🔗 Connecting to OpenAI Realtime API (generic endpoint):', realtimeEndpoint);
-      }
+      // Use the correct endpoint format: https://api.openai.com/v1/realtime?model=...
+      // Get the model from session (should match what backend used)
+      const model = session.model || 'gpt-4o-realtime-preview-2024-12-17';
+      const realtimeEndpoint = `https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
       
       console.log('🔑 Using client_secret token (first 20 chars):', clientSecretValue.substring(0, 20) + '...');
       console.log('📋 SDP offer length:', pc.localDescription.sdp.length);
+      console.log('🔗 Connecting to OpenAI Realtime API:', realtimeEndpoint);
+      console.log('🤖 Using model:', model);
       
       const sdpResp = await fetch(realtimeEndpoint, {
         method: 'POST',
@@ -260,55 +334,45 @@ export function createRealtimeAgent() {
         const errorText = await sdpResp.text().catch(() => 'Unknown error');
         console.error('❌ SDP exchange failed:', sdpResp.status, errorText);
         console.error('📋 Response headers:', Object.fromEntries(sdpResp.headers.entries()));
-        
-        // Try alternative endpoint if first one failed
-        if (sessionId && realtimeEndpoint.includes(sessionId)) {
-          console.log('🔄 Retrying with generic endpoint...');
-          const fallbackEndpoint = 'https://api.openai.com/v1/realtime/sessions/stream';
-          const fallbackResp = await fetch(fallbackEndpoint, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${clientSecretValue}`,
-              'Content-Type': 'application/sdp'
-            },
-            body: pc.localDescription.sdp
-          });
-          
-          if (!fallbackResp.ok) {
-            const fallbackError = await fallbackResp.text().catch(() => 'Unknown error');
-            throw new Error(`SDP exchange failed on both endpoints. Last error: ${fallbackResp.status} - ${fallbackError}`);
-          }
-          
-          const answerSdp = await fallbackResp.text();
-          await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-          console.log('✅ SDP exchange succeeded with fallback endpoint');
-        } else {
-          throw new Error(`SDP exchange failed: ${sdpResp.status} - ${errorText}`);
-        }
-      } else {
-        const answerSdp = await sdpResp.text();
-        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        console.log('✅ SDP exchange succeeded');
+        throw new Error(`SDP exchange failed: ${sdpResp.status} - ${errorText}`);
       }
+      
+      const answerSdp = await sdpResp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      console.log('✅ SDP exchange succeeded');
       
       // Wait for connection to be established
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
+          console.error('⏱️ Connection timeout - WebRTC did not connect within 10 seconds');
+          console.error('📊 Current connection state:', pc.connectionState);
+          console.error('📊 ICE connection state:', pc.iceConnectionState);
           reject(new Error('Connection timeout - WebRTC did not connect within 10 seconds'));
         }, 10000);
         
         const checkConnection = () => {
+          console.log('📊 Connection state changed:', pc.connectionState);
+          console.log('📊 ICE connection state:', pc.iceConnectionState);
+          
           if (pc.connectionState === 'connected') {
             clearTimeout(timeout);
             pc.removeEventListener('connectionstatechange', checkConnection);
             console.log('✅ WebRTC connection fully established');
+            console.log('📊 Final connection state:', pc.connectionState);
+            console.log('📊 Final ICE connection state:', pc.iceConnectionState);
             resolve();
           } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
             clearTimeout(timeout);
             pc.removeEventListener('connectionstatechange', checkConnection);
+            console.error('❌ WebRTC connection failed:', pc.connectionState);
+            console.error('📊 ICE connection state:', pc.iceConnectionState);
             reject(new Error(`WebRTC connection failed: ${pc.connectionState}`));
           }
         };
+        
+        // Log initial state
+        console.log('📊 Initial connection state:', pc.connectionState);
+        console.log('📊 Initial ICE connection state:', pc.iceConnectionState);
         
         if (pc.connectionState === 'connected') {
           clearTimeout(timeout);

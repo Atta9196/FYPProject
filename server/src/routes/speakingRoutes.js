@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const OpenAI = require("openai");
+const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 const admin = require("firebase-admin");
@@ -168,29 +169,27 @@ router.get("/question", async (req, res) => {
       const randomType = questionTypes[Math.floor(Math.random() * questionTypes.length)];
       
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o-mini", // Cost-effective for question generation
         messages: [
           {
             role: "system",
-            content: `You are an IELTS Speaking examiner creating Part 2 questions. Generate a realistic, engaging IELTS Speaking Part 2 question that follows the standard format. 
+            content: `IELTS examiner. Create Part 2 question.
+
+Topic: ${randomTopic}
+Type: ${randomType}
 
 Requirements:
-- Use the topic: ${randomTopic}
-- Question type: ${randomType}
-- Include specific points the candidate should cover
-- Make it interesting and thought-provoking
-- Ensure it's appropriate for IELTS level (B1-C2)
-- Return ONLY the question text, no additional formatting or explanations
-
-The question should be unique and not repetitive. Make it feel fresh and engaging.`
+- Include points to cover
+- IELTS level (B1-C2)
+- Return ONLY question text, no formatting`
           },
           {
             role: "user",
-            content: `Create a dynamic IELTS Speaking Part 2 question about ${randomTopic} with a ${randomType} focus. Make it engaging and original.`
+            content: `Create Part 2 question: ${randomTopic} (${randomType})`
           }
         ],
-        max_tokens: 300,
-        temperature: 0.9 // Higher temperature for more creativity
+        max_tokens: 200, // Reduced from 300 - questions don't need that many tokens
+        temperature: 0.8 // Slightly lower for more consistent quality
       });
 
       const question = completion.choices[0].message.content.trim();
@@ -304,34 +303,32 @@ router.post("/evaluate", upload.single("audio"), async (req, res) => {
     let feedback;
     
     try {
+      // Use gpt-4o for evaluations - more accurate feedback worth the extra cost
       const evaluation = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o", // More accurate for evaluations
         messages: [
           {
             role: "system",
-            content: `You are a professional IELTS Speaking examiner. Evaluate the following response according to IELTS criteria:
+            content: `IELTS examiner. Evaluate response by:
+1. FLUENCY (25%): pace, hesitation, flow
+2. LEXICAL (25%): vocabulary range, word choice
+3. GRAMMAR (25%): sentence variety, accuracy
+4. PRONUNCIATION (25%): clarity, stress, intonation
 
-1. FLUENCY & COHERENCE (25%): Natural pace, hesitation, self-correction, logical flow
-2. LEXICAL RESOURCE (25%): Vocabulary range, word choice, collocation, paraphrasing
-3. GRAMMATICAL RANGE & ACCURACY (25%): Sentence variety, tense usage, error frequency
-4. PRONUNCIATION (25%): Clarity, stress, intonation, accent intelligibility
-
-Provide detailed feedback in this exact format:
-FLUENCY: [score/10] - [detailed comment]
-LEXICAL: [score/10] - [detailed comment]  
-GRAMMAR: [score/10] - [detailed comment]
-PRONUNCIATION: [score/10] - [detailed comment]
-BAND SCORE: [overall band 6.0-9.0]
-
-Be specific about strengths and areas for improvement.`
+Format:
+FLUENCY: [score/10] - [comment]
+LEXICAL: [score/10] - [comment]
+GRAMMAR: [score/10] - [comment]
+PRONUNCIATION: [score/10] - [comment]
+BAND SCORE: [6.0-9.0]`
           },
           {
             role: "user",
-            content: `Please evaluate this IELTS Speaking response:\n\n"${transcript}"`
+            content: `Evaluate: "${transcript}"`
           }
         ],
-        max_tokens: 500,
-        temperature: 0.3
+        max_tokens: 400, // Reduced from 500 - still comprehensive
+        temperature: 0.2 // Lower for more consistent evaluations
       });
 
       const feedbackText = evaluation.choices[0].message.content.trim();
@@ -442,43 +439,30 @@ router.post("/realtime/start", async (req, res) => {
       const randomStyle = conversationStyles[Math.floor(Math.random() * conversationStyles.length)];
       
       const initialMessage = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-4o-mini", // Cost-effective for conversations
         messages: [
           {
             role: "system",
-            content: `You are a professional IELTS Speaking examiner conducting a real-time practice session. 
+            content: `IELTS examiner. Style: ${randomStyle}
 
-Your personality: Be ${randomStyle}
+CRITICAL: Listen carefully and respond directly to what user says.
 
-CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the FULL meaning, not just keywords.
+Rules:
+- Respond to user's actual words, not generic templates
+- Ask specific follow-ups based on their response
+- Reference specific details they mention
+- Mix Part 1 & 3 questions naturally
+- Be conversational, not robotic
 
-Your role:
-- Create a natural, engaging conversation flow
-- LISTEN to what the user actually says and respond to THAT
-- Ask follow-up questions that are SPECIFIC to what they mentioned
-- Reference specific details from their responses
-- Provide gentle feedback when appropriate
-- Mix Part 1 and Part 3 style questions naturally
-- Be conversational and human-like, not robotic
-- Show genuine interest by referencing what they actually said
-- Adapt your questions based on their specific interests and background
-
-Active Listening:
-- Pay attention to the FULL meaning of what the user says
-- If they ask a question, ANSWER IT directly
-- If they share information, acknowledge the SPECIFIC information
-- Remember details they mention and reference them later
-- Show you understood by asking specific follow-up questions
-
-Start with a warm, personalized greeting and ask an opening question that will help you understand the candidate better. Make it feel like a real IELTS interview.`
+Start with warm greeting + opening question.`
           },
           {
             role: "user",
-            content: "Please start the IELTS speaking practice session with a dynamic, engaging opening."
+            content: "Start IELTS practice with engaging opening."
           }
         ],
-        max_tokens: 250,
-        temperature: 0.8 // Higher temperature for more natural variation
+        max_tokens: 150, // Reduced from 250 - greeting should be concise
+        temperature: 0.7 // Slightly lower for more focused responses
       });
 
       const examinerMessage = initialMessage.choices[0].message.content.trim();
@@ -491,7 +475,15 @@ Start with a warm, personalized greeting and ask an opening question that will h
       });
       
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for real-time start, using enhanced fallback:", openaiError.message);
+      console.error("❌ OpenAI API failed for real-time start!");
+      console.error("❌ Error details:", {
+        message: openaiError.message,
+        status: openaiError.status,
+        code: openaiError.code,
+        type: openaiError.type,
+        response: openaiError.response?.data || 'No response data'
+      });
+      console.log("⚠️ Using enhanced fallback response");
       
       // Use enhanced fallback message
       const randomIndex = Math.floor(Math.random() * fallbackMessages.length);
@@ -663,7 +655,7 @@ router.post("/realtime/continue", async (req, res) => {
     };
     
     try {
-      // Try OpenAI first with enhanced context awareness
+      // Try OpenAI first with enhanced context awareness and STREAMING enabled
       const messages = [
         {
           role: "system",
@@ -709,30 +701,65 @@ Guidelines:
         }
       ];
       
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      // Enable streaming for realtime responses
+      console.log('🔄 Starting streaming response for realtime/continue...');
+      
+      // Set headers for Server-Sent Events (SSE) streaming
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+      
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini", // Cost-effective for conversations
         messages: messages,
-        max_tokens: 250,
-        temperature: 0.8 // Higher temperature for more natural variation
+        max_tokens: 150, // Reduced from 250 - responses should be concise (1-2 sentences)
+        temperature: 0.7, // Slightly lower for more focused responses
+        stream: true // Enable streaming for realtime responses
       });
 
-      const examinerResponse = response.choices[0].message.content.trim();
+      let fullResponse = '';
       
-      res.json({
-        message: examinerResponse,
-        success: true
-      });
+      // Stream chunks to client in realtime
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullResponse += content;
+          // Send each chunk as it arrives
+          res.write(`data: ${JSON.stringify({ chunk: content, isComplete: false })}\n\n`);
+        }
+      }
+      
+      // Send final complete message
+      const examinerResponse = fullResponse.trim();
+      res.write(`data: ${JSON.stringify({ message: examinerResponse, success: true, isComplete: true })}\n\n`);
+      res.end();
       
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for continue conversation, using enhanced fallback:", openaiError.message);
+      console.error("❌ OpenAI API failed for continue conversation!");
+      console.error("❌ Error details:", {
+        message: openaiError.message,
+        status: openaiError.status,
+        code: openaiError.code,
+        type: openaiError.type,
+        response: openaiError.response?.data || 'No response data'
+      });
+      console.log("⚠️ Using enhanced fallback response");
       
-      // Use enhanced fallback response
+      // Use enhanced fallback response - also send as SSE for consistency
       const fallbackResponse = getFallbackResponse(userMessage, conversationHistory);
       
-      res.json({
-        message: fallbackResponse,
-        success: true
-      });
+      // If headers were already set for SSE, use SSE format
+      if (res.getHeader('Content-Type') === 'text/event-stream') {
+        res.write(`data: ${JSON.stringify({ message: fallbackResponse, success: true, isComplete: true, fallback: true })}\n\n`);
+        res.end();
+      } else {
+        // Fallback to JSON if SSE headers weren't set
+        res.json({
+          message: fallbackResponse,
+          success: true
+        });
+      }
     }
     
   } catch (error) {
@@ -805,31 +832,70 @@ router.post("/realtime/end", async (req, res) => {
     };
     
     try {
-      // Try OpenAI first
-      const summaryPrompt = `Based on this IELTS speaking practice conversation, provide a brief summary feedback focusing on:
+      // Try OpenAI first - use gpt-4o-mini for summaries (cost-effective)
+      const conversationText = conversationHistory.slice(-10).map(msg => `${msg.role}: ${msg.content}`).join('\n'); // Only last 10 messages
+      const summaryPrompt = `IELTS practice summary. Provide brief feedback:
+
+1. Overall performance
+2. Key strengths
+3. Areas for improvement
+4. Band score (6.0-9.0)
+
+Conversation:
+${conversationText}
+
+Provide concise feedback.`;
       
-      1. Overall performance
-      2. Key strengths
-      3. Areas for improvement
-      4. Suggested band score (6.0-9.0)
-      
-      Conversation history: ${conversationHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n')}
-      
-      Provide concise, constructive feedback.`;
-      
-      const summary = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      // Use streaming to ensure we capture the full response
+      console.log("🔄 Generating summary with streaming to ensure full response...");
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini", // Cost-effective for summaries
         messages: [
           {
             role: "user",
             content: summaryPrompt
           }
         ],
-        max_tokens: 300,
-        temperature: 0.5
+        max_tokens: 600, // Increased to ensure full feedback is captured
+        temperature: 0.4, // Lower for more consistent summaries
+        stream: true // Use streaming to ensure full response
       });
 
-      const feedback = summary.choices[0].message.content.trim();
+      let fullFeedback = '';
+      let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      
+      // Collect all chunks
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullFeedback += content;
+        }
+        // Track token usage if available
+        if (chunk.usage) {
+          tokenUsage = chunk.usage;
+        }
+      }
+
+      const feedback = fullFeedback.trim();
+      
+      // Log full feedback to verify it's complete
+      console.log("📊 Full summary feedback received:", feedback);
+      console.log("📊 Feedback length:", feedback.length, "characters");
+      console.log("📊 Token usage:", tokenUsage);
+      
+      // Verify feedback is not empty
+      if (!feedback || feedback.length === 0) {
+        throw new Error("Empty feedback received from OpenAI");
+      }
+      
+      // Check if feedback seems complete (ends with proper punctuation or is reasonably long)
+      const lastChar = feedback.trim().slice(-1);
+      const hasProperEnding = ['.', '!', '?'].includes(lastChar);
+      if (!hasProperEnding && feedback.length < 100) {
+        console.warn("⚠️ WARNING: Feedback may be incomplete - doesn't end with proper punctuation and is short");
+      }
+      
+      console.log("✅ Summary feedback validated and ready to send");
       
       // Save session to Firestore
       if (db) {
@@ -956,13 +1022,19 @@ router.get("/realtime/token", async (req, res) => {
       });
     }
 
-    // Create session using OpenAI Realtime API with latest model
-    const session = await openai.realtime.sessions.create({
-      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
-      voice: "verse", // Natural voice for IELTS practice
-      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
-      temperature: 0.8,
-      instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
+    // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
+    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
+        voice: "verse", // Natural voice for IELTS practice
+        modalities: ["text", "audio"], // Enable both text and audio for real-time voice
+        temperature: 0.8,
+        instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
 
 CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the context and meaning, not just keywords.
 
@@ -1011,13 +1083,21 @@ Proactive Engagement & Patience:
 - Remember: This is practice - the user may need time to think, especially at the start
 
 Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`,
-      turn_detection: {
-        type: 'server_vad',
-        threshold: 0.3,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 1000 // Increased to 1 second for more patience
-      }
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5, // Higher threshold for better voice detection
+          prefix_padding_ms: 300, // Capture context before user speaks
+          silence_duration_ms: 800 // Shorter silence for faster turn-taking (more natural conversation)
+        }
+      })
     });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
+    }
+
+    const session = await response.json();
 
     console.log("✅ Realtime token created:", session.id);
     console.log("🔑 client_secret exists:", !!session.client_secret);

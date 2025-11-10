@@ -25,6 +25,7 @@ export function SpeakingPracticeView() {
     const [conversationHistory, setConversationHistory] = useState([]);
     const [currentMessage, setCurrentMessage] = useState("");
     const [isTyping, setIsTyping] = useState(false);
+    const [streamingMessage, setStreamingMessage] = useState("");
     const [sessionFeedback, setSessionFeedback] = useState(null);
     
     // Refs
@@ -179,7 +180,7 @@ export function SpeakingPracticeView() {
         }
     };
 
-    // Continue real-time conversation
+    // Continue real-time conversation with streaming support
     const continueConversation = async (userMessage) => {
         if (!userMessage.trim()) return;
         
@@ -195,6 +196,9 @@ export function SpeakingPracticeView() {
             setConversationHistory(newHistory);
             setCurrentMessage("");
             
+            let accumulatedMessage = '';
+            setStreamingMessage(""); // Reset streaming message
+            
             const response = await fetch('http://localhost:5000/api/speaking/realtime/continue', {
                 method: 'POST',
                 headers: {
@@ -207,21 +211,67 @@ export function SpeakingPracticeView() {
                 })
             });
             
-            const data = await response.json();
-            
-            if (data.success) {
-                setConversationHistory([...newHistory, {
-                    role: 'examiner',
-                    content: data.message,
-                    timestamp: new Date()
-                }]);
+            // Check if response is streaming (SSE)
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('text/event-stream')) {
+                // Handle Server-Sent Events streaming
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.chunk) {
+                                    // Accumulate streaming chunks and display in realtime
+                                    accumulatedMessage += data.chunk;
+                                    setStreamingMessage(accumulatedMessage);
+                                }
+                                
+                                if (data.isComplete && data.message) {
+                                    // Final complete message
+                                    accumulatedMessage = data.message;
+                                    setStreamingMessage(""); // Clear streaming message
+                                    setConversationHistory([...newHistory, {
+                                        role: 'examiner',
+                                        content: accumulatedMessage,
+                                        timestamp: new Date()
+                                    }]);
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e);
+                            }
+                        }
+                    }
+                }
             } else {
-                console.error('Failed to continue conversation:', data.error);
+                // Fallback to JSON response (non-streaming)
+                const data = await response.json();
+                
+                if (data.success) {
+                    setConversationHistory([...newHistory, {
+                        role: 'examiner',
+                        content: data.message,
+                        timestamp: new Date()
+                    }]);
+                } else {
+                    console.error('Failed to continue conversation:', data.error);
+                }
             }
         } catch (error) {
             console.error('Error continuing conversation:', error);
+            setStreamingMessage(""); // Clear streaming message on error
         } finally {
             setIsTyping(false);
+            setStreamingMessage(""); // Clear streaming message when done
         }
     };
 
@@ -655,11 +705,18 @@ export function SpeakingPracticeView() {
                                         {isTyping && (
                                             <div className="flex justify-start">
                                                 <div className="bg-slate-100 text-slate-800 px-4 py-2 rounded-lg">
-                                                    <div className="flex space-x-1">
-                                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                                                    </div>
+                                                    {streamingMessage ? (
+                                                        <div className="text-sm">
+                                                            {streamingMessage}
+                                                            <span className="inline-block w-2 h-4 bg-slate-600 ml-1 animate-pulse">|</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex space-x-1">
+                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}
