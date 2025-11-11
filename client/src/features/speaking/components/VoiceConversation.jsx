@@ -15,6 +15,10 @@ export function VoiceConversation({ onEndSession }) {
     const [realtimeTranscript, setRealtimeTranscript] = useState(''); // Real-time transcription as user speaks
     const [isStreamingMode, setIsStreamingMode] = useState(true); // Always use streaming mode
     const [voiceActivity, setVoiceActivity] = useState(false);
+		const [volumeLevel, setVolumeLevel] = useState(0); // 0-100 live level for pronunciation/voice bar
+		const [ieltsPart, setIeltsPart] = useState('Part 1');
+		const examinerTurnsRef = useRef(0);
+		const streamingAgentTextRef = useRef('');
     
     const socketRef = useRef(null);
     const mediaRecorderRef = useRef(null);
@@ -33,21 +37,21 @@ export function VoiceConversation({ onEndSession }) {
     const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME !== 'false');
 
     useEffect(() => {
-        // Always initialize socket connection as fallback (even if Realtime API is enabled)
-        // This ensures socket is available if Realtime API fails
+        // If using Realtime API, do NOT initialize socket (prevents two agents speaking)
+        if (useRealtime) {
+            return;
+        }
+
         const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
         
-        // Initialize socket connection
         if (!socketRef.current) {
             console.log('🔌 Initializing Socket.io connection...');
             socketRef.current = io(SERVER_URL);
         }
         
-        // Set up socket event handlers
         if (socketRef.current) {
             socketRef.current.on('connect', () => {
                 console.log('🔌 Connected to voice server');
-                // Always set connected when socket connects (even if Realtime is enabled, socket is fallback)
                 setIsConnected(true);
             });
             
@@ -61,7 +65,6 @@ export function VoiceConversation({ onEndSession }) {
                 setIsProcessing(false);
                 setIsRecording(false);
                 
-                // Clear processing timeout
                 if (processingTimeoutRef.current) {
                     clearTimeout(processingTimeoutRef.current);
                     processingTimeoutRef.current = null;
@@ -72,15 +75,9 @@ export function VoiceConversation({ onEndSession }) {
             
             socketRef.current.on('disconnect', () => {
                 console.log('🔌 Disconnected from voice server');
-                // Only update connection state if not using Realtime API or if Realtime is not active
-                if (!useRealtime || !realtimeRef.current || sessionId !== 'realtime') {
-                    setIsConnected(false);
-                }
+                setIsConnected(false);
             });
         }
-        
-        // Don't set connected immediately - wait for actual connection
-        // Connection will be set when socket connects or Realtime API connects
         
         return () => {
             if (socketRef.current) {
@@ -214,7 +211,7 @@ export function VoiceConversation({ onEndSession }) {
         }
     };
 
-    const speakWithSpeechSynthesis = (text) => {
+    const speakWithSpeechSynthesis = (text, onEndCallback) => {
         try {
             if (!('speechSynthesis' in window)) {
                 console.warn('⚠️ SpeechSynthesis not available in this browser');
@@ -247,6 +244,9 @@ export function VoiceConversation({ onEndSession }) {
                 utter.onend = () => {
                     console.log('🎵 TTS finished speaking');
                     setIsPlaying(false);
+                    if (typeof onEndCallback === 'function') {
+                        try { onEndCallback(); } catch (cbErr) { console.warn('TTS onEnd callback error:', cbErr); }
+                    }
                 };
                 
                 utter.onerror = (e) => {
@@ -414,20 +414,60 @@ export function VoiceConversation({ onEndSession }) {
                         audioEl: realtimeAudioRef.current,
                         onConnected: () => {
                             setIsConnected(true);
-                            setCurrentMessage('🎧 Real-time voice connected! This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking, and the AI will stop and listen to you.');
                             setIsStreamingMode(true);
+                            // Do NOT start listening yet; first play greeting + first question
+                            setIsListening(false);
+                            setIsRecording(false);
+
+                            // Let Realtime model handle greeting/responding; do not speak locally to avoid double audio
                             setIsListening(true);
-                            setIsRecording(false); // Not recording in Realtime mode - it's true bidirectional streaming
-                            
-                            // Add to conversation history
-                            setConversationHistory([{
-                                role: 'examiner',
-                                content: '🎧 Real-time voice conversation started! This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking.',
-                                timestamp: new Date()
-                            }]);
-                            
-                            console.log('✅ Realtime API connected successfully - true bidirectional voice streaming active');
+                            console.log('✅ Realtime API connected. Listening enabled; AI will speak via realtime audio.');
                         },
+						onAgentMessage: ({ type, text, meta }) => {
+							try {
+								if (type === 'delta' && text) {
+									// Accumulate streaming text from AI
+                                    streamingAgentTextRef.current = (streamingAgentTextRef.current || '') + text;
+									setCurrentMessage(prev => {
+										const combined = (prev || '') + text;
+										return combined;
+									});
+								} else if (type === 'done') {
+									const final = (text && text.trim().length > 0) ? text.trim() : (streamingAgentTextRef.current || '').trim();
+									if (final) {
+										setConversationHistory(prev => ([
+											...prev,
+											{ role: 'examiner', content: final, timestamp: new Date(), isAudio: true }
+										]));
+										setCurrentMessage(final);
+										// Heuristic fallback still available if model does not emit part.change
+										examinerTurnsRef.current += 1;
+									}
+									// Reset accumulator
+									streamingAgentTextRef.current = '';
+								} else if (type === 'part') {
+									if (meta && meta.part) {
+										const p = meta.part === 1 ? 'Part 1' : meta.part === 2 ? 'Part 2' : 'Part 3';
+										setIeltsPart(p);
+										examinerTurnsRef.current = 0;
+									}
+								} else if (type === 'question') {
+                                    if (text && text.trim()) {
+										setCurrentMessage(text.trim());
+										setConversationHistory(prev => ([
+											...prev,
+											{ role: 'examiner', content: text.trim(), timestamp: new Date(), isAudio: true }
+										]));
+									}
+								}
+							} catch (e) {
+								console.warn('⚠️ onAgentMessage handling failed:', e);
+							}
+						},
+						onFeedback: (fb) => {
+							// Optional: wire into UI metrics (pronunciation/fluency/etc.)
+							console.log('🎯 Inline feedback:', fb);
+						},
                         onError: (e) => {
                             console.error('❌ Realtime start failed:', e);
                             setIsConnected(false);
@@ -717,6 +757,9 @@ export function VoiceConversation({ onEndSession }) {
             const isVoiceActive = average > threshold || peak > 40;
             
             setVoiceActivity(isVoiceActive);
+			// Map peak to 0-100 for a smooth pronunciation/voice level bar
+			const normalized = Math.min(100, Math.max(0, Math.round((peak / 255) * 100)));
+			setVolumeLevel(normalized);
             
             // Always automatically start recording when voice is detected (streaming mode only)
             if (sessionId) {
@@ -868,7 +911,8 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const sendStreamingAudio = (audioData) => {
-        if (!sessionId) {
+        // Do not send streaming audio to server when using Realtime session
+        if (!sessionId || sessionId === 'realtime') {
             console.warn('⚠️ No session ID for streaming audio');
             return;
         }
@@ -996,7 +1040,8 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const sendAudioToServer = (audioBlob) => {
-        if (!sessionId) {
+        // Do not send final audio to server when using Realtime session
+        if (!sessionId || sessionId === 'realtime') {
             console.error('❌ No session ID, cannot send audio');
             setIsProcessing(false);
             return;
@@ -1083,11 +1128,9 @@ export function VoiceConversation({ onEndSession }) {
             streamRef.current.getTracks().forEach(track => track.stop());
         }
         
-        if (socketRef.current) {
-            socketRef.current.emit('voice-conversation', { 
-                type: 'end',
-                sessionId: sessionId 
-            });
+        // Only notify server if not in Realtime mode
+        if (socketRef.current && sessionId !== 'realtime') {
+            socketRef.current.emit('voice-conversation', { type: 'end', sessionId });
         }
         
         setIsRecording(false);
@@ -1135,6 +1178,17 @@ export function VoiceConversation({ onEndSession }) {
                                 : 'Speak naturally - AI detects your voice automatically'}
                         </span>
                     </div>
+					{/* IELTS Part Indicator */}
+					<div className="flex items-center space-x-2">
+						<span className="text-xs text-slate-600">Current Section:</span>
+						<span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${
+							ieltsPart === 'Part 1' ? 'bg-sky-50 text-sky-700 border-sky-200'
+							: ieltsPart === 'Part 2' ? 'bg-amber-50 text-amber-700 border-amber-200'
+							: 'bg-violet-50 text-violet-700 border-violet-200'
+						}`}>
+							{ieltsPart}
+						</span>
+					</div>
                 </div>
             )}
 
@@ -1210,7 +1264,7 @@ export function VoiceConversation({ onEndSession }) {
             )}
 
             {/* Voice Activity Indicator */}
-            <div className="flex items-center justify-center space-x-4">
+			<div className="flex items-center justify-center space-x-4">
                 <div className="flex items-center space-x-2">
                     <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
                     <span className="text-sm text-slate-600">
@@ -1247,6 +1301,24 @@ export function VoiceConversation({ onEndSession }) {
                     )}
                 </div>
             </div>
+
+			{/* Realtime pronunciation/voice level bar */}
+			<div className="mt-4">
+				<div className="flex items-center justify-between mb-1">
+					<span className="text-xs font-medium text-slate-600">Realtime voice level</span>
+					<span className="text-xs text-slate-500">{volumeLevel}%</span>
+				</div>
+				<div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+					<div
+						className="h-2 rounded-full transition-all duration-100"
+						style={{
+							width: `${volumeLevel}%`,
+							background: volumeLevel > 70 ? '#22c55e' : volumeLevel > 40 ? '#eab308' : '#94a3b8'
+						}}
+					></div>
+				</div>
+				<p className="text-[11px] text-slate-500 mt-1">Speaks louder/clearer = higher bar. This is not an official pronunciation score.</p>
+			</div>
 
             {/* Microphone Permission Help */}
             {currentMessage && currentMessage.includes('Microphone permission') && (

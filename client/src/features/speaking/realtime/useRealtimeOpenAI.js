@@ -7,10 +7,21 @@ export function createRealtimeAgent() {
   let remoteAudioEl = null;
   let sessionTimer = null;
   let dataChannel = null;
+		let hasSentSessionInstructions = false;
 
   const isSupported = () => typeof RTCPeerConnection !== 'undefined';
 
-  const start = async ({ audioEl, onConnected, onError, maxDurationMs, onTranscriptionUpdate } = {}) => {
+	/**
+	 * start options:
+	 * - audioEl
+	 * - onConnected
+	 * - onError
+	 * - maxDurationMs
+	 * - onTranscriptionUpdate({ transcript, isPartial, isComplete, eventType })
+	 * - onAgentMessage({ type: 'delta'|'done'|'question'|'part'|'feedback', text, meta })
+	 * - onFeedback({ pronunciation, fluency, lexical, grammar, band?, comment? })
+	 */
+	const start = async ({ audioEl, onConnected, onError, maxDurationMs, onTranscriptionUpdate, onAgentMessage, onFeedback } = {}) => {
     try {
       if (!isSupported()) throw new Error('WebRTC not supported');
 
@@ -124,12 +135,61 @@ export function createRealtimeAgent() {
         iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
       });
 
-      // 3) Create data channel for text messages (oai-events)
+		// 3) Create data channel for text messages (oai-events)
       // Note: OpenAI Realtime API uses this channel to send events (transcriptions, responses, etc.)
       dataChannel = pc.createDataChannel('oai-events');
-      dataChannel.onopen = () => {
+		dataChannel.onopen = () => {
         console.log('✅ Data channel opened for text messages');
         console.log('📡 Data channel ready state:', dataChannel.readyState);
+
+			// Send session instructions to run a full IELTS Part 1/2/3 style conversation
+			// Randomized, continuous, no static script, AI speaks first and throughout.
+			try {
+				if (!hasSentSessionInstructions) {
+					const ieltsInstructions = `You are an experienced IELTS Speaking examiner running a full live practice in three parts.
+Rules and flow:
+- Run Part 1 (4-6 short questions), then Part 2 (cue card + 1 minute prep + 1-2 min response), then Part 3 (4-6 deeper questions). Move automatically.
+- Randomize topics and wording; no static script. Keep turns short (1-2 sentences) from the examiner.
+- Reference user's details, ask meaningful follow-ups, and keep momentum.
+- If the user pauses, give a brief encouragement and ask a targeted prompt.
+Events and output:
+- Always output audio and text.
+- Emit structured events when possible:
+  - part.change { part: 1|2|3 }
+  - question.asked { text, part }
+  - feedback.inline { pronunciation, fluency, lexical, grammar, comment }
+  - cuecard.card { topic, bullets }
+Do not reveal band scores during the interview; keep a warm, professional tone.`;
+
+					// Prefer session.update so the instruction persists for the whole call
+					const sessionUpdate = {
+						type: 'session.update',
+						session: {
+							instructions: ieltsInstructions,
+							// Ensure we get audio and text back
+							modalities: ['audio', 'text'],
+						},
+					};
+
+					dataChannel.send(JSON.stringify(sessionUpdate));
+
+					// Immediately ask the first randomized Part 1 question (no local TTS)
+					const startPartOne = {
+						type: 'response.create',
+						response: {
+							instructions: 'Begin Part 1: greet briefly and ask a randomized warm-up question about personal background or daily life.',
+							modalities: ['audio', 'text'],
+						},
+					};
+
+					dataChannel.send(JSON.stringify(startPartOne));
+
+					hasSentSessionInstructions = true;
+					console.log('✅ Sent IELTS session instructions and started Part 1');
+				}
+			} catch (e) {
+				console.warn('⚠️ Failed to send session instructions:', e);
+			}
       };
       dataChannel.onclose = () => {
         console.log('⚠️ Data channel closed');
@@ -172,8 +232,8 @@ export function createRealtimeAgent() {
                      eventData.type === 'conversation_item_input_audio_transcription_failed') {
             isComplete = true;
             isPartial = false;
-          } else if (eventData.type === 'response.audio_transcript.delta' ||
-                     eventData.type === 'response.audio_transcript.done') {
+				} else if (eventData.type === 'response.audio_transcript.delta' ||
+							eventData.type === 'response.audio_transcript.done') {
             // These are for AI responses, not user input
             return;
           }
@@ -188,7 +248,60 @@ export function createRealtimeAgent() {
               eventType: eventData.type
             });
           }
-        } catch (parseError) {
+
+				// Stream AI text responses to UI (for showing current question and tracking parts)
+				try {
+					// Delta updates for AI response
+					if (onAgentMessage && (eventData.type === 'response.delta' || eventData.type === 'response.output_text.delta')) {
+						let textDelta = '';
+						// Try common shapes
+						if (eventData.delta && typeof eventData.delta === 'string') {
+							textDelta = eventData.delta;
+						} else if (eventData.delta && eventData.delta.content) {
+							// If content is an array of text chunks
+							const parts = Array.isArray(eventData.delta.content) ? eventData.delta.content : [eventData.delta.content];
+							textDelta = parts.map(p => (p && p.text) ? p.text : '').join('');
+						} else if (eventData.output_text_delta) {
+							textDelta = eventData.output_text_delta;
+						}
+						if (textDelta) {
+							onAgentMessage({ type: 'delta', text: textDelta });
+						}
+					}
+
+					// Completed AI response
+					if (onAgentMessage && (eventData.type === 'response.completed' || eventData.type === 'response.done' || eventData.type === 'response.output_text.done')) {
+						let finalText = '';
+						if (eventData.response && typeof eventData.response.output_text === 'string') {
+							finalText = eventData.response.output_text;
+						} else if (typeof eventData.output_text === 'string') {
+							finalText = eventData.output_text;
+						}
+						onAgentMessage({ type: 'done', text: finalText });
+					}
+				} catch (msgErr) {
+					console.warn('⚠️ Failed to surface AI message to UI:', msgErr);
+				}
+
+				// Structured events that the model may send
+				try {
+					if (eventData.type === 'part.change' && onAgentMessage) {
+						onAgentMessage({ type: 'part', text: null, meta: { part: eventData.part } });
+					}
+					if (eventData.type === 'question.asked' && onAgentMessage) {
+						onAgentMessage({ type: 'question', text: eventData.text, meta: { part: eventData.part } });
+					}
+					if (eventData.type === 'feedback.inline' && onFeedback) {
+						onFeedback(eventData.feedback);
+						onAgentMessage && onAgentMessage({ type: 'feedback', text: null, meta: eventData.feedback });
+					}
+					if (eventData.type === 'cuecard.card' && onAgentMessage) {
+						onAgentMessage({ type: 'question', text: eventData.topic, meta: { part: 2, bullets: eventData.bullets } });
+					}
+				} catch (e) {
+					console.warn('⚠️ Failed to surface structured event:', e);
+				}
+			} catch (parseError) {
           // If not JSON, log as plain text
           console.log('📨 Realtime message from AI (text):', event.data);
         }
@@ -440,7 +553,7 @@ export function createRealtimeAgent() {
       onError && onError(e);
       throw e;
     }
-  };
+	};
 
   const stop = async () => {
     try {
@@ -490,7 +603,22 @@ export function createRealtimeAgent() {
     }
   };
 
-  return { start, stop, isSupported };
+	// Optional: request a fresh Part 2 cue card on demand
+	const requestCueCard = () => {
+		if (!dataChannel || dataChannel.readyState !== 'open') {
+			throw new Error('Data channel is not open');
+		}
+		const cueReq = {
+			type: 'response.create',
+			response: {
+				instructions: 'Generate an IELTS Part 2 cue card with a random topic and 3-4 bullet prompts.',
+				modalities: ['audio', 'text']
+			}
+		};
+		dataChannel.send(JSON.stringify(cueReq));
+	};
+
+	return { start, stop, isSupported, requestCueCard };
 }
 
 
