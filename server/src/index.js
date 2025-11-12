@@ -150,6 +150,10 @@ app.use("/api/speaking", speakingRoutes);
 const voiceRoutes = require("./routes/voiceRoutes");
 app.use("/api/voice", voiceRoutes);
 
+// Writing evaluation routes
+const writingRoutes = require("./routes/writingRoutes");
+app.use("/api/writing", writingRoutes);
+
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
 const fs = require('fs');

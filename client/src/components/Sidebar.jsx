@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import Section from './ui/Section';
-import { ChartIcon, InsightsIcon, MicIcon, ListIcon, TabsIcon, UserIcon, HelpIcon } from './ui/icons';
+import { ChartIcon, InsightsIcon, MicIcon, ListIcon, TabsIcon, UserIcon, HelpIcon, HeadphonesIcon, BookIcon, PenIcon } from './ui/icons';
 
 export default function Sidebar() {
     return (
@@ -15,6 +15,9 @@ export default function Sidebar() {
                 <SideLink to="/performance" icon={InsightsIcon} label="Performance" />
                 <Section label="Practice" />
                 <SideLink to="/speaking" icon={MicIcon} label="Speaking Practice" />
+                <SideLink to="/listening" icon={HeadphonesIcon} label="Listening Practice" />
+                <SideLink to="/reading" icon={BookIcon} label="Reading Practice" />
+                <SideLink to="/writing" icon={PenIcon} label="Writing Practice" />
                 <SideLink to="/mcq" icon={ListIcon} label="MCQ Practice" />
                 <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" />
                 <Section label="Account" />

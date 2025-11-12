@@ -656,6 +656,15 @@ router.post("/realtime/continue", async (req, res) => {
     
     try {
       // Try OpenAI first with enhanced context awareness and STREAMING enabled
+      // Normalize client history roles to OpenAI roles
+      const normalizedHistory = (Array.isArray(conversationHistory) ? conversationHistory : [])
+        .slice(-8)
+        .map((msg) => ({
+          role: msg.role === 'user' ? 'user' : 'assistant', // map 'examiner' -> 'assistant'
+          content: String(msg.content || '').trim(),
+        }))
+        .filter((m) => m.content.length > 0);
+
       const messages = [
         {
           role: "system",
@@ -694,7 +703,7 @@ Guidelines:
 - Keep the tone encouraging and supportive
 - Make the conversation feel natural and flowing`
         },
-        ...conversationHistory.slice(-8), // Keep last 8 messages for better context
+        ...normalizedHistory, // Keep last messages with correct roles for better context
         {
           role: "user",
           content: userMessage

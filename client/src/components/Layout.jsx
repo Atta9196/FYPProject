@@ -1,7 +1,19 @@
 import React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import Section from './ui/Section';
-import { ChartIcon, InsightsIcon, MicIcon, ListIcon, TabsIcon, UserIcon, HelpIcon, MenuIcon } from './ui/icons';
+import {
+    ChartIcon,
+    InsightsIcon,
+    MicIcon,
+    HeadphonesIcon,
+    BookIcon,
+    PenIcon,
+    ListIcon,
+    TabsIcon,
+    UserIcon,
+    HelpIcon,
+    MenuIcon
+} from './ui/icons';
 import { useAuth } from '../contexts/AuthContext';
 
 export function AppLayout({ children }) {
@@ -23,6 +35,9 @@ export function AppLayout({ children }) {
                         <SideLink to="/performance" icon={InsightsIcon} label="Performance" />
                         <Section label="Practice" />
                         <SideLink to="/speaking" icon={MicIcon} label="Speaking Practice" />
+                        <SideLink to="/listening" icon={HeadphonesIcon} label="Listening Practice" />
+                        <SideLink to="/reading" icon={BookIcon} label="Reading Practice" />
+                        <SideLink to="/writing" icon={PenIcon} label="Writing Practice" />
                         <SideLink to="/mcq" icon={ListIcon} label="MCQ Practice" />
                         <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" />
                         <Section label="Account" />

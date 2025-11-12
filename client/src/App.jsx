@@ -11,6 +11,9 @@ import LandingPage from "./pages/LandingPage";
 import HomeLanding from "./pages/HomeLanding";
 import { DashboardView } from "./pages/DashboardView";
 import { SpeakingPracticeView } from "./pages/SpeakingPracticeView";
+import { ListeningPracticeView } from "./pages/ListeningPracticeView";
+import { ReadingPracticeView } from "./pages/ReadingPracticeView";
+import { WritingPracticeView } from "./pages/WritingPracticeView";
 import { FullTestSimulatorView } from "./pages/FullTestSimulatorView";
 import { MCQPracticeView } from "./pages/MCQPracticeView";
 import { PerformanceDashboardView } from "./pages/PerformanceDashboardView";
@@ -67,6 +70,30 @@ function App() {
                   element={
                     <ProtectedRoute requireAuth={true}>
                       <SpeakingPracticeView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/listening"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <ListeningPracticeView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/reading"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <ReadingPracticeView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/writing"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <WritingPracticeView />
                     </ProtectedRoute>
                   }
                 />
