@@ -364,12 +364,6 @@ export function ReadingPracticeView() {
     }, [timerStatus, timeRemaining]);
 
     useEffect(() => {
-        if (timerStatus === "timesup" && !submitted && !submitting) {
-            handleSubmit(true);
-        }
-    }, [timerStatus, submitted, submitting, handleSubmit]);
-
-    useEffect(() => {
         setShowDetailedResults(mode === "practice");
     }, [mode]);
 
@@ -470,6 +464,12 @@ export function ReadingPracticeView() {
         },
         [submitted, submitting, activeSet, answers, mode, persistHistory, timeRemaining]
     );
+
+    useEffect(() => {
+        if (timerStatus === "timesup" && !submitted && !submitting) {
+            handleSubmit(true);
+        }
+    }, [timerStatus, submitted, submitting, handleSubmit]);
 
     const handleAddHighlight = useCallback(() => {
         setHighlightError(null);
