@@ -1,7 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
-import { listeningSections, totalListeningQuestions } from "../data/listeningTest";
+
+const STORAGE_KEY = "ielts-listening-history";
+
+function loadHistory() {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        console.warn("Failed to parse listening history", error);
+        return [];
+    }
+}
+
+function saveHistory(entries) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+}
 
 const bandTable = [
     { min: 39, band: "9" },
@@ -126,18 +145,62 @@ const phaseLabels = {
 };
 
 export function ListeningPracticeView() {
-    const [activeSectionId, setActiveSectionId] = useState(listeningSections[0]?.id ?? null);
-    const [sectionStates, setSectionStates] = useState(() =>
-        listeningSections.reduce((acc, section) => {
-            acc[section.id] = defaultSectionState(section);
-            return acc;
-        }, {})
-    );
+    const [listeningSections, setListeningSections] = useState([]);
+    const [totalListeningQuestions, setTotalListeningQuestions] = useState(40);
+    const [loading, setLoading] = useState(true);
+    const [generating, setGenerating] = useState(false);
+    const [errorMessage, setErrorMessage] = useState(null);
+    const [activeSectionId, setActiveSectionId] = useState(null);
+    const [sectionStates, setSectionStates] = useState({});
     const audioRefs = useRef({});
+
+    // Load AI-generated listening test
+    const loadAIGeneratedListening = useCallback(async () => {
+        try {
+            setGenerating(true);
+            setErrorMessage(null);
+            
+            const response = await fetch('http://localhost:5000/api/listening/generate');
+            const data = await response.json();
+            
+            if (data.success && data.sections) {
+                const sections = data.sections;
+                setListeningSections(sections);
+                setTotalListeningQuestions(data.totalQuestions || 40);
+                
+                // Initialize section states
+                const initialStates = sections.reduce((acc, section) => {
+                    acc[section.id] = defaultSectionState(section);
+                    return acc;
+                }, {});
+                setSectionStates(initialStates);
+                
+                // Set first section as active
+                if (sections.length > 0) {
+                    setActiveSectionId(sections[0].id);
+                }
+                
+                // Reset test state - these don't exist in this component, removing
+            } else {
+                throw new Error(data.error || "Failed to generate listening test");
+            }
+        } catch (error) {
+            console.error("Error loading AI listening test:", error);
+            setErrorMessage("Failed to generate listening test. Please try again.");
+        } finally {
+            setGenerating(false);
+            setLoading(false);
+        }
+    }, []);
+
+    // Load initial listening test on mount
+    useEffect(() => {
+        loadAIGeneratedListening();
+    }, [loadAIGeneratedListening]);
 
     const activeSection = useMemo(
         () => listeningSections.find((section) => section.id === activeSectionId),
-        [activeSectionId]
+        [listeningSections, activeSectionId]
     );
 
     const overallStats = useMemo(() => {
@@ -247,13 +310,51 @@ export function ListeningPracticeView() {
                                 .reduce((sum, item) => sum + prev[item.id].score, 0)
                     )
                 };
-                return {
+                const newState = {
                     ...prev,
                     [sectionId]: updated
                 };
+
+                // Check if all sections are completed and save to localStorage
+                const allSectionsCompleted = listeningSections.every(
+                    (s) => newState[s.id]?.submitted === true
+                );
+
+                if (allSectionsCompleted) {
+                    // Calculate total score and band
+                    const totalScore = listeningSections.reduce(
+                        (sum, s) => sum + (newState[s.id]?.score || 0),
+                        0
+                    );
+                    const finalBand = getBandFromScore(totalScore);
+
+                    // Save to localStorage
+                    const historyEntry = {
+                        id: Date.now(),
+                        totalScore,
+                        totalQuestions: totalListeningQuestions,
+                        band: parseFloat(finalBand) || 0,
+                        sections: listeningSections.map((s) => ({
+                            sectionId: s.id,
+                            sectionTitle: s.title,
+                            score: newState[s.id]?.score || 0,
+                            totalQuestions: s.questions.length
+                        })),
+                        submittedAt: new Date().toISOString()
+                    };
+
+                    const existingHistory = loadHistory();
+                    const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                    saveHistory(updatedHistory);
+
+                    // Dispatch event to update dashboards in real-time
+                    window.dispatchEvent(new Event('progressUpdated'));
+                }
+
+                return newState;
             });
         },
-        [setSectionStates]
+        [setSectionStates, listeningSections, totalListeningQuestions]
     );
 
     useEffect(() => {
@@ -327,11 +428,65 @@ export function ListeningPracticeView() {
         });
     }, [sectionStates, updateSectionState, handleSubmitSection]);
 
-    if (!activeSection) {
-        return null;
+    if (loading || generating) {
+        return (
+            <AppLayout>
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
+                        <h1 className="text-3xl font-extrabold text-sky-700">Generating Listening Test</h1>
+                        <p className="text-slate-600 text-sm md:text-base">
+                            {generating ? "Creating AI-generated IELTS Listening test for you..." : "Loading..."}
+                        </p>
+                    </Panel>
+                </div>
+            </AppLayout>
+        );
+    }
+
+    if (!activeSection || listeningSections.length === 0) {
+        return (
+            <AppLayout>
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4">
+                        <h1 className="text-3xl font-extrabold text-sky-700 text-center">Listening Practice</h1>
+                        <p className="text-slate-600 text-sm md:text-base text-center">
+                            Failed to load listening test. Please try generating a new one.
+                        </p>
+                        {errorMessage && (
+                            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                {errorMessage}
+                            </div>
+                        )}
+                        <div className="text-center">
+                            <button
+                                onClick={loadAIGeneratedListening}
+                                disabled={generating}
+                                className="px-6 py-3 bg-sky-600 text-white rounded-lg font-semibold hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {generating ? "🔄 Generating..." : "✨ Generate New Test"}
+                            </button>
+                        </div>
+                    </Panel>
+                </div>
+            </AppLayout>
+        );
     }
 
     const activeState = sectionStates[activeSection.id];
+    if (!activeState) {
+        return (
+            <AppLayout>
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
+                        <h1 className="text-3xl font-extrabold text-sky-700">Initializing Test</h1>
+                        <p className="text-slate-600 text-sm md:text-base">Setting up listening test sections...</p>
+                    </Panel>
+                </div>
+            </AppLayout>
+        );
+    }
     const playbackProgress =
         1 - activeState.timeRemaining / (activeSection.durationSeconds || 1);
     const reviewProgress =
@@ -351,12 +506,21 @@ export function ListeningPracticeView() {
                             Follow the official IELTS rules: single-play audio, strict timing, and automatic scoring.
                         </p>
                     </div>
-                    <a
-                        href="/dashboard"
-                        className="self-start md:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                    >
-                        ← Back to Dashboard
-                    </a>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={loadAIGeneratedListening}
+                            disabled={generating}
+                            className="px-4 py-2 text-sm font-medium rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {generating ? "🔄 Generating..." : "✨ Generate New Test"}
+                        </button>
+                        <a
+                            href="/dashboard"
+                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                        >
+                            ← Back to Dashboard
+                        </a>
+                    </div>
                 </div>
 
                 <Panel title="Practice Summary" className="bg-white/90 backdrop-blur rounded-2xl shadow-md">

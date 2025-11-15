@@ -4,6 +4,26 @@ import Panel from "../components/ui/Panel";
 import MicButton from "../features/speaking/components/MicButton";
 import { VoiceConversation } from "../features/speaking/components/VoiceConversation";
 
+const STORAGE_KEY = "ielts-speaking-history";
+
+function loadHistory() {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        console.warn("Failed to parse speaking history", error);
+        return [];
+    }
+}
+
+function saveHistory(entries) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+}
+
 export function SpeakingPracticeView() {
     // Mode selection state
     const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
@@ -134,6 +154,24 @@ export function SpeakingPracticeView() {
             if (data.success) {
                 setTranscript(data.transcript);
                 setEvaluation(data.feedback);
+
+                // Save to localStorage for progress tracking
+                const historyEntry = {
+                    id: Date.now(),
+                    question: currentQuestion,
+                    transcript: data.transcript,
+                    feedback: data.feedback,
+                    bandScore: parseFloat(data.feedback?.bandScore?.replace(/[^0-9.]/g, '') || 0),
+                    submittedAt: new Date().toISOString(),
+                    type: 'recorded_practice'
+                };
+
+                const existingHistory = loadHistory();
+                const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                saveHistory(updatedHistory);
+
+                // Dispatch event to update dashboards in real-time
+                window.dispatchEvent(new Event('progressUpdated'));
             } else {
                 console.error('Evaluation failed:', data.error);
                 alert('Failed to evaluate your response. Please try again.');
@@ -295,6 +333,29 @@ export function SpeakingPracticeView() {
             
             if (data.success) {
                 setSessionFeedback(data.feedback);
+
+                // Extract band score from feedback if available
+                const bandScoreMatch = data.feedback?.match(/band\s*score[:\s]*([0-9.]+)/i);
+                const bandScore = bandScoreMatch ? parseFloat(bandScoreMatch[1]) : 0;
+
+                // Save to localStorage for progress tracking
+                const historyEntry = {
+                    id: Date.now(),
+                    sessionId: sessionId,
+                    conversationHistory: conversationHistory,
+                    feedback: data.feedback,
+                    bandScore: bandScore,
+                    submittedAt: new Date().toISOString(),
+                    type: 'realtime_practice'
+                };
+
+                const existingHistory = loadHistory();
+                const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                saveHistory(updatedHistory);
+
+                // Dispatch event to update dashboards in real-time
+                window.dispatchEvent(new Event('progressUpdated'));
+
                 setIsRealtimeActive(false);
             } else {
                 console.error('Failed to end session:', data.error);

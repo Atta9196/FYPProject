@@ -154,6 +154,14 @@ app.use("/api/voice", voiceRoutes);
 const writingRoutes = require("./routes/writingRoutes");
 app.use("/api/writing", writingRoutes);
 
+// Reading practice routes
+const readingRoutes = require("./routes/readingRoutes");
+app.use("/api/reading", readingRoutes);
+
+// Listening practice routes
+const listeningRoutes = require("./routes/listeningRoutes");
+app.use("/api/listening", listeningRoutes);
+
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
 const fs = require('fs');

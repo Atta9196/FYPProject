@@ -1,16 +1,76 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { getAllProgressData } from '../../services/progressService';
 
 export default function WeeklyStudyGraph({ data, height = 200 }) {
-    const chartData = data || [
-        { day: 'Mon', hours: 2.5, tests: 3 },
-        { day: 'Tue', hours: 3.0, tests: 4 },
-        { day: 'Wed', hours: 1.5, tests: 2 },
-        { day: 'Thu', hours: 4.0, tests: 5 },
-        { day: 'Fri', hours: 2.0, tests: 3 },
-        { day: 'Sat', hours: 3.5, tests: 4 },
-        { day: 'Sun', hours: 2.5, tests: 3 }
-    ];
+    const [chartData, setChartData] = useState([
+        { day: 'Mon', hours: 0, tests: 0 },
+        { day: 'Tue', hours: 0, tests: 0 },
+        { day: 'Wed', hours: 0, tests: 0 },
+        { day: 'Thu', hours: 0, tests: 0 },
+        { day: 'Fri', hours: 0, tests: 0 },
+        { day: 'Sat', hours: 0, tests: 0 },
+        { day: 'Sun', hours: 0, tests: 0 }
+    ]);
+
+    useEffect(() => {
+        const loadWeeklyData = () => {
+            if (data) {
+                setChartData(data);
+                return;
+            }
+
+            try {
+                const progress = getAllProgressData();
+                const allEntries = [
+                    ...progress.reading,
+                    ...progress.writing,
+                    ...progress.listening,
+                    ...progress.speaking
+                ];
+
+                // Get last 7 days
+                const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const weeklyData = days.map((day, index) => {
+                    const date = new Date();
+                    date.setDate(date.getDate() - (6 - index));
+                    date.setHours(0, 0, 0, 0);
+                    const nextDate = new Date(date);
+                    nextDate.setDate(nextDate.getDate() + 1);
+
+                    const dayEntries = allEntries.filter(entry => {
+                        const entryDate = new Date(entry.submittedAt);
+                        return entryDate >= date && entryDate < nextDate;
+                    });
+
+                    const tests = dayEntries.length;
+                    const hours = Math.round(tests * 1.2 * 10) / 10; // Estimate 1.2 hours per test
+
+                    return { day, hours, tests };
+                });
+
+                setChartData(weeklyData);
+            } catch (error) {
+                console.error("Error loading weekly data:", error);
+            }
+        };
+
+        loadWeeklyData();
+
+        // Update every 5 seconds
+        const interval = setInterval(loadWeeklyData, 5000);
+
+        // Listen for progress updates
+        const handleProgressUpdate = () => {
+            loadWeeklyData();
+        };
+        window.addEventListener('progressUpdated', handleProgressUpdate);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('progressUpdated', handleProgressUpdate);
+        };
+    }, [data]);
 
     return (
         <div className="bg-white/90 backdrop-blur rounded-2xl p-6 shadow-lg">

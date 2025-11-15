@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import StatCard from "../components/ui/StatCard";
@@ -7,12 +7,17 @@ import {
     RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
     BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
+import {
+    getBandProgress,
+    getWeeklyTests,
+    getModuleBreakdown,
+    getPracticeHistory,
+    getAllProgressData
+} from "../services/progressService";
 
 export function PerformanceDashboardView() {
     const [selectedTimeframe, setSelectedTimeframe] = useState('3months');
-
-    // Mock data for charts and analytics
-    const mockData = {
+    const [performanceData, setPerformanceData] = useState({
         bandProgress: [
             { month: 'Jan', overall: 5.5, speaking: 5.0, reading: 6.0, writing: 5.5, listening: 6.0 },
             { month: 'Feb', overall: 6.0, speaking: 5.5, reading: 6.5, writing: 6.0, listening: 6.5 },
@@ -65,11 +70,127 @@ export function PerformanceDashboardView() {
         },
         goals: {
             monthlyGoal: 60,
-            achieved: 36,
+            achieved: 0,
             testDate: '2024-12-15',
             daysRemaining: 172
         }
+    });
+
+    // Load performance data
+    const loadPerformanceData = () => {
+        try {
+            const bandProgress = getBandProgress(selectedTimeframe);
+            const weeklyTests = getWeeklyTests();
+            const moduleBreakdown = getModuleBreakdown();
+            const practiceHistory = getPracticeHistory(20);
+
+            // Calculate monthly goal progress
+            const allProgress = getAllProgressData();
+            const totalTests = allProgress.reading.length + allProgress.writing.length + allProgress.listening.length;
+            const monthlyGoal = 60;
+            const achieved = totalTests;
+
+            // Calculate days remaining (assuming test date is 6 months from now if not set)
+            const testDate = new Date();
+            testDate.setMonth(testDate.getMonth() + 6);
+            const daysRemaining = Math.ceil((testDate - new Date()) / (1000 * 60 * 60 * 24));
+
+            setPerformanceData({
+                bandProgress: bandProgress.length > 0 ? bandProgress : [
+                    { month: 'Jan', overall: 0, speaking: 0, reading: 0, writing: 0, listening: 0 }
+                ],
+                weeklyTests,
+                moduleBreakdown,
+                practiceHistory,
+                aiInsights: {
+                    strengths: generateInsights(moduleBreakdown, 'strengths'),
+                    improvements: generateInsights(moduleBreakdown, 'improvements'),
+                    recommendations: generateInsights(moduleBreakdown, 'recommendations')
+                },
+                goals: {
+                    monthlyGoal,
+                    achieved,
+                    testDate: testDate.toISOString().split('T')[0],
+                    daysRemaining: Math.max(0, daysRemaining)
+                }
+            });
+        } catch (error) {
+            console.error("Error loading performance data:", error);
+        }
     };
+
+    // Generate AI insights based on module breakdown
+    const generateInsights = (breakdown, type) => {
+        const insights = {
+            strengths: [],
+            improvements: [],
+            recommendations: []
+        };
+
+        // Analyze each module
+        Object.entries(breakdown).forEach(([module, data]) => {
+            if (data.attempts === 0) return;
+
+            const avgBand = data.averageBand || (data.averageAccuracy / 10) || 0;
+            
+            if (type === 'strengths') {
+                if (avgBand >= 7.0) {
+                    insights.strengths.push(`Strong performance in ${module} (Band ${avgBand.toFixed(1)})`);
+                }
+                if (data.attempts >= 10) {
+                    insights.strengths.push(`Consistent practice in ${module} (${data.attempts} attempts)`);
+                }
+            } else if (type === 'improvements') {
+                if (avgBand < 7.0 && avgBand > 0) {
+                    insights.improvements.push(`Focus on improving ${module} skills (Current: Band ${avgBand.toFixed(1)})`);
+                }
+                if (data.weakAreas && data.weakAreas.length > 0) {
+                    insights.improvements.push(`Work on ${data.weakAreas[0]} in ${module}`);
+                }
+            } else if (type === 'recommendations') {
+                if (avgBand < 7.0 && avgBand > 0) {
+                    insights.recommendations.push(`Practice ${module} more frequently to improve`);
+                }
+                if (data.attempts < 5) {
+                    insights.recommendations.push(`Complete more ${module} practice tests`);
+                }
+            }
+        });
+
+        // Default insights if no data
+        if (insights[type].length === 0) {
+            if (type === 'strengths') {
+                insights.strengths.push('Keep practicing to build your strengths');
+            } else if (type === 'improvements') {
+                insights.improvements.push('Start practicing to identify areas for improvement');
+            } else {
+                insights.recommendations.push('Complete practice tests to get personalized recommendations');
+            }
+        }
+
+        return insights[type].slice(0, 4); // Limit to 4 items
+    };
+
+    // Load data on mount and when timeframe changes
+    useEffect(() => {
+        loadPerformanceData();
+
+        // Set up real-time updates
+        const interval = setInterval(() => {
+            loadPerformanceData();
+        }, 5000);
+
+        // Listen for progress updates
+        const handleProgressUpdate = () => {
+            loadPerformanceData();
+        };
+        window.addEventListener('progressUpdated', handleProgressUpdate);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('progressUpdated', handleProgressUpdate);
+        };
+    }, [selectedTimeframe]);
 
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
 
@@ -98,12 +219,12 @@ export function PerformanceDashboardView() {
                                 <h1 className="text-4xl md:text-5xl font-extrabold mb-3">
                                     Performance Analytics 📊
                                 </h1>
-                                <p className="text-xl text-blue-100">Detailed insights into your IELTS progress</p>
+                                    <p className="text-xl text-blue-100">Detailed insights into your IELTS progress</p>
                             </div>
                             <div className="hidden md:block">
                                 <div className="text-right">
                                     <p className="text-blue-200 text-sm">Days to Test</p>
-                                    <p className="text-3xl font-bold">{mockData.goals.daysRemaining}</p>
+                                    <p className="text-3xl font-bold">{performanceData.goals.daysRemaining}</p>
                                 </div>
                             </div>
                         </div>
@@ -137,7 +258,7 @@ export function PerformanceDashboardView() {
                         <Panel title="Band Score Growth" className="bg-white/90 backdrop-blur rounded-2xl shadow-lg">
                             <div className="h-80">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={mockData.bandProgress}>
+                                    <AreaChart data={performanceData.bandProgress}>
                                         <defs>
                                             <linearGradient id="colorOverall" x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.8}/>
@@ -171,7 +292,7 @@ export function PerformanceDashboardView() {
                         <Panel title="Tests Completed Weekly" className="bg-white/90 backdrop-blur rounded-2xl shadow-lg">
                             <div className="h-80">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={mockData.weeklyTests}>
+                                    <BarChart data={performanceData.weeklyTests}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                                         <XAxis dataKey="week" stroke="#64748B" />
                                         <YAxis stroke="#64748B" />
@@ -196,10 +317,10 @@ export function PerformanceDashboardView() {
                             <div className="h-80">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <RadarChart data={[
-                                        { subject: 'Speaking', A: mockData.moduleBreakdown.speaking.averageBand, fullMark: 9 },
-                                        { subject: 'Reading', A: mockData.moduleBreakdown.reading.accuracy / 10, fullMark: 9 },
-                                        { subject: 'Writing', A: (mockData.moduleBreakdown.writing.task1 + mockData.moduleBreakdown.writing.task2) / 2, fullMark: 9 },
-                                        { subject: 'Listening', A: mockData.moduleBreakdown.listening.averageAccuracy / 10, fullMark: 9 }
+                                        { subject: 'Speaking', A: performanceData.moduleBreakdown.speaking.averageBand, fullMark: 9 },
+                                        { subject: 'Reading', A: performanceData.moduleBreakdown.reading.averageBand || (performanceData.moduleBreakdown.reading.accuracy / 10), fullMark: 9 },
+                                        { subject: 'Writing', A: (performanceData.moduleBreakdown.writing.task1 + performanceData.moduleBreakdown.writing.task2) / 2, fullMark: 9 },
+                                        { subject: 'Listening', A: performanceData.moduleBreakdown.listening.averageBand || (performanceData.moduleBreakdown.listening.averageAccuracy / 10), fullMark: 9 }
                                     ]}>
                                         <PolarGrid stroke="#E2E8F0" />
                                         <PolarAngleAxis dataKey="subject" stroke="#64748B" />
@@ -227,7 +348,7 @@ export function PerformanceDashboardView() {
 
                         <Panel title="Module Statistics" className="bg-white/90 backdrop-blur rounded-2xl shadow-lg">
                             <div className="space-y-6">
-                                {Object.entries(mockData.moduleBreakdown).map(([module, data]) => (
+                                {Object.entries(performanceData.moduleBreakdown).map(([module, data]) => (
                                     <div key={module} className="p-4 bg-gradient-to-r from-slate-50 to-white rounded-xl border border-slate-200">
                                         <div className="flex items-center justify-between mb-3">
                                             <h4 className="text-lg font-semibold text-slate-800 capitalize">{module}</h4>
@@ -278,18 +399,19 @@ export function PerformanceDashboardView() {
                     {/* Practice History Table */}
                     <Panel title="Practice History" className="bg-white/90 backdrop-blur rounded-2xl shadow-lg">
                         <div className="overflow-x-auto">
-                            <table className="w-full">
-                                <thead>
-                                    <tr className="border-b border-slate-200">
-                                        <th className="text-left py-3 px-4 font-semibold text-slate-700">Date</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-slate-700">Test Type</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-slate-700">Band Score</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-slate-700">Duration</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-slate-700">Feedback</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {mockData.practiceHistory.map((practice, index) => (
+                            {performanceData.practiceHistory.length > 0 ? (
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="border-b border-slate-200">
+                                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Date</th>
+                                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Test Type</th>
+                                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Band Score</th>
+                                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Duration</th>
+                                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Feedback</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {performanceData.practiceHistory.map((practice, index) => (
                                         <tr key={index} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                                             <td className="py-3 px-4 text-sm text-slate-600">{formatDate(practice.date)}</td>
                                             <td className="py-3 px-4 text-sm font-medium text-slate-800">{practice.type}</td>
@@ -304,9 +426,15 @@ export function PerformanceDashboardView() {
                                             <td className="py-3 px-4 text-sm text-slate-600">{practice.duration}</td>
                                             <td className="py-3 px-4 text-sm text-slate-600 max-w-xs truncate">{practice.feedback}</td>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div className="text-center py-12 text-slate-500">
+                                    <p className="text-sm">No practice history yet</p>
+                                    <p className="text-xs mt-2">Complete practice tests to see your history here</p>
+                                </div>
+                            )}
                         </div>
                     </Panel>
 
@@ -317,7 +445,7 @@ export function PerformanceDashboardView() {
                                 <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200">
                                     <h4 className="text-lg font-semibold text-green-800 mb-3">💪 Your Strengths</h4>
                                     <ul className="space-y-2">
-                                        {mockData.aiInsights.strengths.map((strength, index) => (
+                                        {performanceData.aiInsights.strengths.map((strength, index) => (
                                             <li key={index} className="flex items-start gap-2 text-sm text-green-700">
                                                 <span className="text-green-500 mt-1">✓</span>
                                                 <span>{strength}</span>
@@ -329,7 +457,7 @@ export function PerformanceDashboardView() {
                                 <div className="p-4 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-xl border border-orange-200">
                                     <h4 className="text-lg font-semibold text-orange-800 mb-3">🎯 Areas to Improve</h4>
                                     <ul className="space-y-2">
-                                        {mockData.aiInsights.improvements.map((improvement, index) => (
+                                        {performanceData.aiInsights.improvements.map((improvement, index) => (
                                             <li key={index} className="flex items-start gap-2 text-sm text-orange-700">
                                                 <span className="text-orange-500 mt-1">⚡</span>
                                                 <span>{improvement}</span>
@@ -341,7 +469,7 @@ export function PerformanceDashboardView() {
                                 <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
                                     <h4 className="text-lg font-semibold text-blue-800 mb-3">📚 Recommendations</h4>
                                     <ul className="space-y-2">
-                                        {mockData.aiInsights.recommendations.map((recommendation, index) => (
+                                        {performanceData.aiInsights.recommendations.map((recommendation, index) => (
                                             <li key={index} className="flex items-start gap-2 text-sm text-blue-700">
                                                 <span className="text-blue-500 mt-1">📖</span>
                                                 <span>{recommendation}</span>
@@ -361,17 +489,17 @@ export function PerformanceDashboardView() {
                                     </div>
                                     <div className="mb-3">
                                         <div className="flex justify-between text-sm text-purple-700 mb-1">
-                                            <span>{mockData.goals.achieved} tests completed</span>
-                                            <span>{mockData.goals.monthlyGoal} target</span>
+                                            <span>{performanceData.goals.achieved} tests completed</span>
+                                            <span>{performanceData.goals.monthlyGoal} target</span>
                                         </div>
                                         <div className="w-full bg-purple-200 rounded-full h-3">
                                             <div 
                                                 className="bg-gradient-to-r from-purple-500 to-purple-600 h-3 rounded-full transition-all duration-500"
-                                                style={{ width: `${(mockData.goals.achieved / mockData.goals.monthlyGoal) * 100}%` }}
+                                                style={{ width: `${Math.min((performanceData.goals.achieved / performanceData.goals.monthlyGoal) * 100, 100)}%` }}
                                             ></div>
                                         </div>
                                         <p className="text-sm text-purple-600 mt-2">
-                                            {Math.round((mockData.goals.achieved / mockData.goals.monthlyGoal) * 100)}% complete
+                                            {Math.round((performanceData.goals.achieved / performanceData.goals.monthlyGoal) * 100)}% complete
                                         </p>
                                     </div>
                                 </div>
@@ -382,9 +510,9 @@ export function PerformanceDashboardView() {
                                         <span className="text-2xl">⏰</span>
                                     </div>
                                     <div className="text-center">
-                                        <p className="text-3xl font-bold text-red-700 mb-2">{mockData.goals.daysRemaining}</p>
+                                        <p className="text-3xl font-bold text-red-700 mb-2">{performanceData.goals.daysRemaining}</p>
                                         <p className="text-sm text-red-600">days until your IELTS test</p>
-                                        <p className="text-xs text-red-500 mt-1">Test Date: {formatDate(mockData.goals.testDate)}</p>
+                                        <p className="text-xs text-red-500 mt-1">Test Date: {formatDate(performanceData.goals.testDate)}</p>
                                     </div>
                                 </div>
 

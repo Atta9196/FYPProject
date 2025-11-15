@@ -135,6 +135,8 @@ export function WritingPracticeView() {
         setHistory((prev) => {
             const next = [entry, ...prev].slice(0, historyLimit);
             saveHistory(next);
+            // Dispatch event to update dashboards in real-time
+            window.dispatchEvent(new Event('progressUpdated'));
             return next;
         });
     }, []);

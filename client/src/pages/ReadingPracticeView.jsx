@@ -294,10 +294,11 @@ function HighlightList({ highlights, onUpdateNote, onRemove }) {
 }
 
 export function ReadingPracticeView() {
-    const availableSets = Array.isArray(readingPassageSets) ? readingPassageSets : [];
-    const hasReadingSets = availableSets.length > 0;
-    const [selectedSetId, setSelectedSetId] = useState(() => (hasReadingSets ? availableSets[0].id : null));
-    const [activeSet, setActiveSet] = useState(() => (hasReadingSets ? availableSets[0] : null));
+    const [availableSets, setAvailableSets] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [generating, setGenerating] = useState(false);
+    const [selectedSetId, setSelectedSetId] = useState(null);
+    const [activeSet, setActiveSet] = useState(null);
     const [mode, setMode] = useState("practice"); // practice | exam
     const [timerStatus, setTimerStatus] = useState("idle"); // idle | running | completed | timesup
     const [timeRemaining, setTimeRemaining] = useState(TIMER_SECONDS);
@@ -313,34 +314,67 @@ export function ReadingPracticeView() {
 
     const passageRef = useRef(null);
 
+    // Load AI-generated reading test
+    const loadAIGeneratedReading = useCallback(async () => {
+        try {
+            setGenerating(true);
+            setErrorMessage(null);
+            
+            const response = await fetch('http://localhost:5000/api/reading/generate');
+            const data = await response.json();
+            
+            if (data.success && data.readingSet) {
+                const newSet = data.readingSet;
+                setAvailableSets([newSet]);
+                setSelectedSetId(newSet.id);
+                setActiveSet(newSet);
+                
+                // Reset test state
+                setTimerStatus("idle");
+                setTimeRemaining(TIMER_SECONDS);
+                setAnswers({});
+                setSubmitted(false);
+                setSubmitting(false);
+                setResults(null);
+                setHighlights([]);
+            } else {
+                throw new Error(data.error || "Failed to generate reading test");
+            }
+        } catch (error) {
+            console.error("Error loading AI reading test:", error);
+            setErrorMessage("Failed to generate reading test. Please try again.");
+        } finally {
+            setGenerating(false);
+            setLoading(false);
+        }
+    }, []);
+
+    // Load initial reading test on mount
     useEffect(() => {
-        if (!hasReadingSets) {
-            setActiveSet(null);
+        loadAIGeneratedReading();
+    }, [loadAIGeneratedReading]);
+
+    useEffect(() => {
+        if (availableSets.length === 0) {
             return;
         }
 
-        console.log("ReadingPracticeView init:", {
-            availableSetsLength: availableSets.length,
-            firstSetId: availableSets[0]?.id,
-            selectedSetId
-        });
-
-        if (!selectedSetId) {
-            const fallback = availableSets[0];
-            setSelectedSetId(fallback?.id ?? null);
-            setActiveSet(fallback ?? null);
+        if (!selectedSetId && availableSets.length > 0) {
+            const firstSet = availableSets[0];
+            setSelectedSetId(firstSet.id);
+            setActiveSet(firstSet);
             return;
         }
 
         const found = availableSets.find((set) => set.id === selectedSetId);
         if (found) {
             setActiveSet(found);
-        } else {
-            const fallback = availableSets[0] ?? null;
-            setSelectedSetId(fallback?.id ?? null);
-            setActiveSet(fallback);
+        } else if (availableSets.length > 0) {
+            const firstSet = availableSets[0];
+            setSelectedSetId(firstSet.id);
+            setActiveSet(firstSet);
         }
-    }, [availableSets, hasReadingSets, selectedSetId]);
+    }, [availableSets, selectedSetId]);
 
     useEffect(() => {
         if (timerStatus !== "running") {
@@ -387,12 +421,9 @@ export function ReadingPracticeView() {
         [availableSets]
     );
 
-    const handleRandomSet = useCallback(() => {
-        const random = getRandomReadingSet();
-        if (random?.id) {
-            handleSelectSet(random.id);
-        }
-    }, [handleSelectSet]);
+    const handleGenerateNew = useCallback(() => {
+        loadAIGeneratedReading();
+    }, [loadAIGeneratedReading]);
 
     const handleModeChange = useCallback((value) => {
         setMode(value);
@@ -419,6 +450,8 @@ export function ReadingPracticeView() {
         setHistory((prev) => {
             const next = [entry, ...prev].slice(0, 20);
             saveHistory(next);
+            // Dispatch event to update dashboards in real-time
+            window.dispatchEvent(new Event('progressUpdated'));
             return next;
         });
     }, []);
@@ -536,23 +569,17 @@ export function ReadingPracticeView() {
         return question.options || [];
     };
 
-    if (!hasReadingSets || !activeSet) {
+    // Ensure activeSet exists before rendering
+    if (!activeSet) {
         return (
             <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen">
-                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4">
-                        <h1 className="text-3xl font-extrabold text-amber-700 text-center">Reading Practice</h1>
-                        <p className="text-slate-600 text-sm md:text-base text-center">
-                            Reading materials failed to load. Please refresh the page. If the issue persists, ensure that the reading
-                            dataset is bundled correctly.
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen flex items-center justify-center">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
+                        <h1 className="text-3xl font-extrabold text-amber-700">Generating Reading Test</h1>
+                        <p className="text-slate-600 text-sm md:text-base">
+                            {generating ? "Creating AI-generated IELTS Reading test for you..." : "Loading..."}
                         </p>
-                        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-left text-xs text-amber-700 space-y-2">
-                            <p className="font-semibold uppercase tracking-wide">Debug Information</p>
-                            <p>availableSets length: {availableSets.length}</p>
-                            <p>hasReadingSets: {String(hasReadingSets)}</p>
-                            <p>selectedSetId: {selectedSetId ?? "null"}</p>
-                            <p>activeSet: {activeSet ? activeSet.id : "null"}</p>
-                        </div>
                     </Panel>
                 </div>
             </AppLayout>
@@ -588,7 +615,7 @@ export function ReadingPracticeView() {
                                         type="button"
                                         onClick={() => handleSelectSet(set.id)}
                                         className={`w-full text-left rounded-xl border px-4 py-3 text-sm transition-all ${
-                                            set.id === activeSet.id
+                                            set.id === activeSet?.id
                                                 ? "border-amber-500 bg-amber-50 text-amber-700 shadow-sm"
                                                 : "border-slate-200 text-slate-700 hover:bg-slate-50"
                                         }`}
@@ -600,10 +627,11 @@ export function ReadingPracticeView() {
                             </div>
                             <button
                                 type="button"
-                                onClick={handleRandomSet}
-                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
+                                onClick={handleGenerateNew}
+                                disabled={generating}
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                🔀 Random Set
+                                {generating ? "🔄 Generating..." : "✨ Generate New Test"}
                             </button>
                         </div>
 

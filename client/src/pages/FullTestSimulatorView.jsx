@@ -1,220 +1,683 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
-import Tabs from "../components/ui/Tabs";
+import { useNavigate } from "react-router-dom";
+
+// Import module components (we'll embed them)
+import { ReadingPracticeView } from "./ReadingPracticeView";
+import { WritingPracticeView } from "./WritingPracticeView";
+import { ListeningPracticeView } from "./ListeningPracticeView";
+import { SpeakingPracticeView } from "./SpeakingPracticeView";
+
+const STORAGE_KEY = "ielts-full-test-history";
+
+// Test timing (in seconds)
+const MODULE_TIMES = {
+    listening: 40 * 60,      // 40 minutes
+    reading: 60 * 60,         // 60 minutes
+    writing: 60 * 60,         // 60 minutes
+    speaking: 14 * 60         // 14 minutes
+};
+
+const TOTAL_TEST_TIME = Object.values(MODULE_TIMES).reduce((sum, time) => sum + time, 0);
+
+function loadHistory() {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        console.warn("Failed to parse full test history", error);
+        return [];
+    }
+}
+
+function saveHistory(entries) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+}
 
 export function FullTestSimulatorView() {
-    const [activeTab, setActiveTab] = useState(0);
+    const navigate = useNavigate();
+    
+    // Test state
     const [testStarted, setTestStarted] = useState(false);
-
-    const ListeningContent = () => (
-        <div className="space-y-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h3 className="font-semibold text-blue-900 mb-2">Listening Test Instructions</h3>
-                <ul className="text-sm text-blue-800 space-y-1">
-                    <li>• You will hear 4 recordings</li>
-                    <li>• Each recording will be played only once</li>
-                    <li>• You have 10 minutes to transfer your answers</li>
-                    <li>• Total time: 40 minutes</li>
-                </ul>
-            </div>
-            <div className="text-center py-12">
-                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-2xl">🎧</span>
-                </div>
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">Ready to Start Listening Test?</h3>
-                <p className="text-slate-500 mb-4">Click the button below to begin the listening section</p>
-                <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                    Start Listening Test
-                </button>
-            </div>
-        </div>
-    );
-
-    const ReadingContent = () => (
-        <div className="space-y-6">
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <h3 className="font-semibold text-green-900 mb-2">Reading Test Instructions</h3>
-                <ul className="text-sm text-green-800 space-y-1">
-                    <li>• 3 reading passages with 40 questions total</li>
-                    <li>• 60 minutes to complete all questions</li>
-                    <li>• No extra time for transferring answers</li>
-                    <li>• Answer directly on the answer sheet</li>
-                </ul>
-            </div>
-            <div className="text-center py-12">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-2xl">📖</span>
-                </div>
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">Ready to Start Reading Test?</h3>
-                <p className="text-slate-500 mb-4">Click the button below to begin the reading section</p>
-                <button className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
-                    Start Reading Test
-                </button>
-            </div>
-        </div>
-    );
-
-    const WritingContent = () => (
-        <div className="space-y-6">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <h3 className="font-semibold text-yellow-900 mb-2">Writing Test Instructions</h3>
-                <ul className="text-sm text-yellow-800 space-y-1">
-                    <li>• Task 1: Write at least 150 words (20 minutes)</li>
-                    <li>• Task 2: Write at least 250 words (40 minutes)</li>
-                    <li>• Total time: 60 minutes</li>
-                    <li>• Use formal academic style</li>
-                </ul>
-            </div>
-            <div className="text-center py-12">
-                <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-2xl">✍️</span>
-                </div>
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">Ready to Start Writing Test?</h3>
-                <p className="text-slate-500 mb-4">Click the button below to begin the writing section</p>
-                <button className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors">
-                    Start Writing Test
-                </button>
-            </div>
-        </div>
-    );
-
-    const SpeakingContent = () => (
-        <div className="space-y-6">
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                <h3 className="font-semibold text-purple-900 mb-2">Speaking Test Instructions</h3>
-                <ul className="text-sm text-purple-800 space-y-1">
-                    <li>• Part 1: Introduction and interview (4-5 minutes)</li>
-                    <li>• Part 2: Individual long turn (3-4 minutes)</li>
-                    <li>• Part 3: Two-way discussion (4-5 minutes)</li>
-                    <li>• Total time: 11-14 minutes</li>
-                </ul>
-            </div>
-            <div className="text-center py-12">
-                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-2xl">🎤</span>
-                </div>
-                <h3 className="text-lg font-semibold text-slate-700 mb-2">Ready to Start Speaking Test?</h3>
-                <p className="text-slate-500 mb-4">Click the button below to begin the speaking section</p>
-                <button className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">
-                    Start Speaking Test
-                </button>
-            </div>
-        </div>
-    );
-
-    const tabs = [
-        { 
-            label: 'Listening', 
-            content: <ListeningContent />,
-            icon: '🎧',
-            time: '40 min',
-            color: 'blue'
-        },
-        { 
-            label: 'Reading', 
-            content: <ReadingContent />,
-            icon: '📖',
-            time: '60 min',
-            color: 'green'
-        },
-        { 
-            label: 'Writing', 
-            content: <WritingContent />,
-            icon: '✍️',
-            time: '60 min',
-            color: 'yellow'
-        },
-        { 
-            label: 'Speaking', 
-            content: <SpeakingContent />,
-            icon: '🎤',
-            time: '14 min',
-            color: 'purple'
+    const [testCompleted, setTestCompleted] = useState(false);
+    const [currentModule, setCurrentModule] = useState(null); // 'listening' | 'reading' | 'writing' | 'speaking'
+    const [overallTimer, setOverallTimer] = useState(TOTAL_TEST_TIME);
+    const [moduleTimers, setModuleTimers] = useState({
+        listening: MODULE_TIMES.listening,
+        reading: MODULE_TIMES.reading,
+        writing: MODULE_TIMES.writing,
+        speaking: MODULE_TIMES.speaking
+    });
+    
+    // Module completion status
+    const [moduleStatus, setModuleStatus] = useState({
+        listening: { completed: false, score: null, band: null },
+        reading: { completed: false, score: null, band: null },
+        writing: { completed: false, score: null, band: null },
+        speaking: { completed: false, score: null, band: null }
+    });
+    
+    // Module order
+    const moduleOrder = ['listening', 'reading', 'writing', 'speaking'];
+    const currentModuleIndex = currentModule ? moduleOrder.indexOf(currentModule) : -1;
+    
+    // Format time helper
+    const formatTime = (seconds) => {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        if (hours > 0) {
+            return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         }
-    ];
-
-    return (
-        <AppLayout>
-            <div className="space-y-6">
-                {/* Test Overview */}
-                <Panel title="IELTS Full Test Simulator">
-                    <div className="space-y-4">
-                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
-                            <h2 className="text-xl font-semibold text-slate-900 mb-2">Complete IELTS Test Experience</h2>
-                            <p className="text-slate-600 mb-4">
-                                Practice all four IELTS modules in one comprehensive test session. This simulator provides 
-                                realistic test conditions to help you prepare for the actual exam.
+        return `${minutes}:${String(secs).padStart(2, '0')}`;
+    };
+    
+    // Start test
+    const handleStartTest = useCallback(() => {
+        setTestStarted(true);
+        setCurrentModule('listening');
+        setOverallTimer(TOTAL_TEST_TIME);
+        setModuleTimers({
+            listening: MODULE_TIMES.listening,
+            reading: MODULE_TIMES.reading,
+            writing: MODULE_TIMES.writing,
+            speaking: MODULE_TIMES.speaking
+        });
+        setModuleStatus({
+            listening: { completed: false, score: null, band: null },
+            reading: { completed: false, score: null, band: null },
+            writing: { completed: false, score: null, band: null },
+            speaking: { completed: false, score: null, band: null }
+        });
+    }, []);
+    
+    // Complete module
+    const handleModuleComplete = useCallback((module, results) => {
+        setModuleStatus(prev => ({
+            ...prev,
+            [module]: {
+                completed: true,
+                score: results.score || results.correctCount || 0,
+                band: results.band || 0
+            }
+        }));
+        
+        // Move to next module
+        const nextIndex = moduleOrder.indexOf(module) + 1;
+        if (nextIndex < moduleOrder.length) {
+            setCurrentModule(moduleOrder[nextIndex]);
+        } else {
+            // All modules completed
+            handleTestComplete();
+        }
+    }, []);
+    
+    // Complete test
+    const handleTestComplete = useCallback(() => {
+        setTestCompleted(true);
+        setTestStarted(false);
+        setCurrentModule(null);
+        
+        // Calculate overall band (average of all modules)
+        const bands = Object.values(moduleStatus)
+            .map(m => m.band)
+            .filter(b => b !== null && b > 0);
+        
+        const overallBand = bands.length > 0
+            ? (bands.reduce((sum, b) => sum + parseFloat(b), 0) / bands.length).toFixed(1)
+            : 0;
+        
+        // Save to history
+        const historyEntry = {
+            id: Date.now(),
+            completedAt: new Date().toISOString(),
+            modules: moduleStatus,
+            overallBand: parseFloat(overallBand),
+            totalTime: TOTAL_TEST_TIME - overallTimer
+        };
+        
+        const existingHistory = loadHistory();
+        const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+        saveHistory(updatedHistory);
+        
+        // Dispatch event to update dashboards
+        window.dispatchEvent(new Event('progressUpdated'));
+    }, [moduleStatus, overallTimer]);
+    
+    // Timer effect
+    useEffect(() => {
+        if (!testStarted || testCompleted) return;
+        
+        const interval = setInterval(() => {
+            setOverallTimer(prev => {
+                if (prev <= 1) {
+                    handleTestComplete();
+                    return 0;
+                }
+                return prev - 1;
+            });
+            
+            if (currentModule) {
+                setModuleTimers(prev => ({
+                    ...prev,
+                    [currentModule]: Math.max(0, prev[currentModule] - 1)
+                }));
+            }
+        }, 1000);
+        
+        return () => clearInterval(interval);
+    }, [testStarted, testCompleted, currentModule, handleTestComplete]);
+    
+    // Listen for module completion events
+    useEffect(() => {
+        const handleModuleResult = (event) => {
+            const { module, results } = event.detail;
+            if (testStarted && !moduleStatus[module]?.completed) {
+                handleModuleComplete(module, results);
+            }
+        };
+        
+        window.addEventListener('moduleCompleted', handleModuleResult);
+        return () => window.removeEventListener('moduleCompleted', handleModuleResult);
+    }, [testStarted, moduleStatus, handleModuleComplete]);
+    
+    // Progress calculation
+    const progress = useMemo(() => {
+        const completed = Object.values(moduleStatus).filter(m => m.completed).length;
+        return (completed / moduleOrder.length) * 100;
+    }, [moduleStatus]);
+    
+    // If test not started, show start screen
+    if (!testStarted && !testCompleted) {
+        return (
+            <AppLayout>
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-indigo-50 via-white to-purple-50 min-h-screen">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-6">
+                        <div className="text-center space-y-4">
+                            <h1 className="text-4xl font-extrabold text-indigo-700">IELTS Full Test Simulator</h1>
+                            <p className="text-lg text-slate-600">
+                                Complete all four modules in one comprehensive test session
                             </p>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                {tabs.map((tab, index) => (
-                                    <div key={index} className="text-center">
-                                        <div className="text-2xl mb-2">{tab.icon}</div>
-                                        <div className="text-sm font-medium text-slate-700">{tab.label}</div>
-                                        <div className="text-xs text-slate-500">{tab.time}</div>
-                                    </div>
-                                ))}
-                            </div>
                         </div>
                         
-                        <div className="flex items-center justify-between">
-                            <div className="text-sm text-slate-600">
-                                Total Test Duration: <span className="font-semibold">2 hours 54 minutes</span>
-                            </div>
-                            <button 
-                                onClick={() => setTestStarted(!testStarted)}
-                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                            >
-                                {testStarted ? 'End Test' : 'Start Full Test'}
-                            </button>
-                        </div>
-                    </div>
-                </Panel>
-
-                {/* Test Sections */}
-                <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm">
-                    <Tabs
-                        tabs={tabs}
-                        initial={activeTab}
-                        onChange={setActiveTab}
-                    />
-                </div>
-
-                {/* Progress Tracker */}
-                <Panel title="Test Progress">
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-4 gap-4">
-                            {tabs.map((tab, index) => (
-                                <div 
-                                    key={index}
-                                    className={`p-3 rounded-lg border text-center cursor-pointer transition-all ${
-                                        activeTab === index 
-                                            ? 'border-blue-500 bg-blue-50' 
-                                            : 'border-slate-200 bg-white hover:bg-slate-50'
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {moduleOrder.map((module, index) => (
+                                <div
+                                    key={module}
+                                    className={`p-4 rounded-xl border-2 ${
+                                        module === 'listening' ? 'border-blue-200 bg-blue-50' :
+                                        module === 'reading' ? 'border-green-200 bg-green-50' :
+                                        module === 'writing' ? 'border-yellow-200 bg-yellow-50' :
+                                        'border-purple-200 bg-purple-50'
                                     }`}
-                                    onClick={() => setActiveTab(index)}
                                 >
-                                    <div className="text-lg mb-1">{tab.icon}</div>
-                                    <div className="text-sm font-medium text-slate-700">{tab.label}</div>
-                                    <div className="text-xs text-slate-500">{tab.time}</div>
-                                    <div className={`w-2 h-2 rounded-full mx-auto mt-2 ${
-                                        index < activeTab ? 'bg-green-500' : 
-                                        index === activeTab ? 'bg-blue-500' : 'bg-slate-300'
-                                    }`}></div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-lg font-semibold text-slate-800 capitalize">{module}</h3>
+                                        <span className="text-2xl">
+                                            {module === 'listening' ? '🎧' :
+                                             module === 'reading' ? '📖' :
+                                             module === 'writing' ? '✍️' : '🎤'}
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-slate-600">
+                                        {module === 'listening' && '40 minutes - 4 sections, 40 questions'}
+                                        {module === 'reading' && '60 minutes - 3 passages, 40 questions'}
+                                        {module === 'writing' && '60 minutes - 2 tasks (150 & 250 words)'}
+                                        {module === 'speaking' && '11-14 minutes - 3 parts'}
+                                    </p>
                                 </div>
                             ))}
                         </div>
-                        <div className="text-center text-sm text-slate-600">
-                            <span className="inline-block w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                            Completed
-                            <span className="inline-block w-2 h-2 bg-blue-500 rounded-full mr-2 ml-4"></span>
-                            Current
-                            <span className="inline-block w-2 h-2 bg-slate-300 rounded-full mr-2 ml-4"></span>
-                            Pending
+                        
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-6 space-y-4">
+                            <h3 className="text-lg font-semibold text-indigo-900">Test Information</h3>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <span className="text-slate-600">Total Duration:</span>
+                                    <span className="font-semibold text-slate-800 ml-2">2 hours 54 minutes</span>
+                                </div>
+                                <div>
+                                    <span className="text-slate-600">Modules:</span>
+                                    <span className="font-semibold text-slate-800 ml-2">4</span>
+                                </div>
+                                <div>
+                                    <span className="text-slate-600">Total Questions:</span>
+                                    <span className="font-semibold text-slate-800 ml-2">80+</span>
+                                </div>
+                                <div>
+                                    <span className="text-slate-600">AI-Generated:</span>
+                                    <span className="font-semibold text-slate-800 ml-2">Yes</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                            <h4 className="font-semibold text-amber-900 mb-2">⚠️ Important Instructions</h4>
+                            <ul className="text-sm text-amber-800 space-y-1">
+                                <li>• Complete modules in order: Listening → Reading → Writing → Speaking</li>
+                                <li>• Each module has its own timer</li>
+                                <li>• You cannot go back to previous modules once completed</li>
+                                <li>• The test will auto-submit when time expires</li>
+                                <li>• Results will be saved automatically</li>
+                            </ul>
+                        </div>
+                        
+                        <div className="flex gap-4">
+                            <button
+                                onClick={handleStartTest}
+                                className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                            >
+                                Start Full Test
+                            </button>
+                            <button
+                                onClick={() => navigate('/dashboard')}
+                                className="px-6 py-3 border border-slate-300 text-slate-600 rounded-lg font-semibold hover:bg-slate-50 transition-colors"
+                            >
+                                Back to Dashboard
+                            </button>
+                        </div>
+                    </Panel>
+                </div>
+            </AppLayout>
+        );
+    }
+    
+    // If test completed, show results
+    if (testCompleted) {
+        const bands = Object.values(moduleStatus)
+            .map(m => m.band)
+            .filter(b => b !== null && b > 0);
+        const overallBand = bands.length > 0
+            ? (bands.reduce((sum, b) => sum + parseFloat(b), 0) / bands.length).toFixed(1)
+            : 0;
+        
+        return (
+            <AppLayout>
+                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-emerald-50 via-white to-green-50 min-h-screen">
+                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-6">
+                        <div className="text-center space-y-4">
+                            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+                                <span className="text-4xl">✅</span>
+                            </div>
+                            <h1 className="text-4xl font-extrabold text-emerald-700">Test Completed!</h1>
+                            <p className="text-lg text-slate-600">Congratulations on completing the full IELTS test</p>
+                        </div>
+                        
+                        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-6">
+                            <div className="text-center mb-6">
+                                <p className="text-sm text-slate-600 mb-2">Overall Band Score</p>
+                                <p className="text-5xl font-extrabold text-indigo-700">{overallBand}</p>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {moduleOrder.map(module => {
+                                    const status = moduleStatus[module];
+                                    return (
+                                        <div
+                                            key={module}
+                                            className={`p-4 rounded-lg border-2 text-center ${
+                                                module === 'listening' ? 'border-blue-200 bg-blue-50' :
+                                                module === 'reading' ? 'border-green-200 bg-green-50' :
+                                                module === 'writing' ? 'border-yellow-200 bg-yellow-50' :
+                                                'border-purple-200 bg-purple-50'
+                                            }`}
+                                        >
+                                            <div className="text-2xl mb-2">
+                                                {module === 'listening' ? '🎧' :
+                                                 module === 'reading' ? '📖' :
+                                                 module === 'writing' ? '✍️' : '🎤'}
+                                            </div>
+                                            <p className="text-sm font-semibold text-slate-700 capitalize mb-1">{module}</p>
+                                            {status.completed ? (
+                                                <>
+                                                    <p className="text-xl font-bold text-slate-800">{status.band || 'N/A'}</p>
+                                                    <p className="text-xs text-slate-500">Score: {status.score || 0}</p>
+                                                </>
+                                            ) : (
+                                                <p className="text-sm text-slate-500">Not completed</p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => {
+                                    setTestCompleted(false);
+                                    setTestStarted(false);
+                                    setCurrentModule(null);
+                                    setModuleStatus({
+                                        listening: { completed: false, score: null, band: null },
+                                        reading: { completed: false, score: null, band: null },
+                                        writing: { completed: false, score: null, band: null },
+                                        speaking: { completed: false, score: null, band: null }
+                                    });
+                                }}
+                                className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                            >
+                                Take Another Test
+                            </button>
+                            <button
+                                onClick={() => navigate('/dashboard')}
+                                className="px-6 py-3 border border-slate-300 text-slate-600 rounded-lg font-semibold hover:bg-slate-50 transition-colors"
+                            >
+                                View Dashboard
+                            </button>
+                        </div>
+                    </Panel>
+                </div>
+            </AppLayout>
+        );
+    }
+    
+    // Render current module
+    return (
+        <AppLayout>
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+                {/* Test Header */}
+                <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+                    <div className="max-w-7xl mx-auto px-4 py-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <h1 className="text-xl font-bold text-slate-800">IELTS Full Test</h1>
+                                <div className="flex items-center gap-2">
+                                    {moduleOrder.map((module, index) => (
+                                        <div
+                                            key={module}
+                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+                                                index < currentModuleIndex
+                                                    ? 'bg-emerald-500 text-white'
+                                                    : index === currentModuleIndex
+                                                    ? 'bg-indigo-600 text-white'
+                                                    : 'bg-slate-200 text-slate-500'
+                                            }`}
+                                        >
+                                            {index + 1}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                    <p className="text-xs text-slate-500">Overall Time</p>
+                                    <p className="text-lg font-bold text-slate-800">{formatTime(overallTimer)}</p>
+                                </div>
+                                {currentModule && (
+                                    <div className="text-right">
+                                        <p className="text-xs text-slate-500 capitalize">{currentModule} Time</p>
+                                        <p className="text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => {
+                                        if (window.confirm('Are you sure you want to exit the test? Your progress will be saved.')) {
+                                            handleTestComplete();
+                                        }
+                                    }}
+                                    className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                                >
+                                    Exit Test
+                                </button>
+                            </div>
+                        </div>
+                        
+                        {/* Progress Bar */}
+                        <div className="mt-4">
+                            <div className="w-full bg-slate-200 rounded-full h-2">
+                                <div
+                                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                                    style={{ width: `${progress}%` }}
+                                />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                                Progress: {Math.round(progress)}% ({Object.values(moduleStatus).filter(m => m.completed).length}/4 modules)
+                            </p>
                         </div>
                     </div>
-                </Panel>
+                </div>
+                
+                {/* Module Content */}
+                <div className="max-w-7xl mx-auto p-4">
+                    {currentModule === 'listening' && (
+                        <ListeningTestWrapper
+                            onComplete={(results) => {
+                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                    detail: { module: 'listening', results }
+                                }));
+                            }}
+                        />
+                    )}
+                    {currentModule === 'reading' && (
+                        <ReadingTestWrapper
+                            onComplete={(results) => {
+                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                    detail: { module: 'reading', results }
+                                }));
+                            }}
+                        />
+                    )}
+                    {currentModule === 'writing' && (
+                        <WritingTestWrapper
+                            onComplete={(results) => {
+                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                    detail: { module: 'writing', results }
+                                }));
+                            }}
+                        />
+                    )}
+                    {currentModule === 'speaking' && (
+                        <SpeakingTestWrapper
+                            onComplete={(results) => {
+                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                    detail: { module: 'speaking', results }
+                                }));
+                            }}
+                        />
+                    )}
+                </div>
             </div>
         </AppLayout>
     );
+}
+
+// Wrapper components to integrate module views
+function ListeningTestWrapper({ onComplete }) {
+    const [completed, setCompleted] = useState(false);
+    
+    useEffect(() => {
+        if (completed) return;
+        
+        const checkCompletion = () => {
+            try {
+                const history = JSON.parse(localStorage.getItem('ielts-listening-history') || '[]');
+                if (history.length > 0) {
+                    const latest = history[0];
+                    // Check if this entry was created during this test session (within last 5 minutes)
+                    const entryTime = new Date(latest.submittedAt).getTime();
+                    const now = Date.now();
+                    if (latest.submittedAt && (now - entryTime) < 5 * 60 * 1000 && latest.totalScore !== undefined) {
+                        setCompleted(true);
+                        onComplete({
+                            score: latest.totalScore,
+                            band: latest.band
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking listening completion:', error);
+            }
+        };
+        
+        // Check immediately and then periodically
+        checkCompletion();
+        const interval = setInterval(checkCompletion, 2000);
+        
+        const handleStorageChange = (e) => {
+            if (e.key === 'ielts-listening-history') {
+                checkCompletion();
+            }
+        };
+        
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('progressUpdated', checkCompletion);
+        
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('progressUpdated', checkCompletion);
+        };
+    }, [onComplete, completed]);
+    
+    return <ListeningPracticeView />;
+}
+
+function ReadingTestWrapper({ onComplete }) {
+    const [completed, setCompleted] = useState(false);
+    
+    useEffect(() => {
+        if (completed) return;
+        
+        const checkCompletion = () => {
+            try {
+                const history = JSON.parse(localStorage.getItem('ielts-reading-history') || '[]');
+                if (history.length > 0) {
+                    const latest = history[0];
+                    const entryTime = new Date(latest.submittedAt).getTime();
+                    const now = Date.now();
+                    if (latest.submittedAt && (now - entryTime) < 5 * 60 * 1000 && latest.correctCount !== undefined) {
+                        setCompleted(true);
+                        onComplete({
+                            correctCount: latest.correctCount,
+                            band: latest.band
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking reading completion:', error);
+            }
+        };
+        
+        checkCompletion();
+        const interval = setInterval(checkCompletion, 2000);
+        
+        const handleStorageChange = (e) => {
+            if (e.key === 'ielts-reading-history') {
+                checkCompletion();
+            }
+        };
+        
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('progressUpdated', checkCompletion);
+        
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('progressUpdated', checkCompletion);
+        };
+    }, [onComplete, completed]);
+    
+    return <ReadingPracticeView />;
+}
+
+function WritingTestWrapper({ onComplete }) {
+    const [completed, setCompleted] = useState(false);
+    
+    useEffect(() => {
+        if (completed) return;
+        
+        const checkCompletion = () => {
+            try {
+                const history = JSON.parse(localStorage.getItem('ielts-writing-history') || '[]');
+                if (history.length > 0) {
+                    const latest = history[0];
+                    const entryTime = new Date(latest.submittedAt).getTime();
+                    const now = Date.now();
+                    if (latest.submittedAt && (now - entryTime) < 5 * 60 * 1000 && latest.overallBand !== undefined) {
+                        setCompleted(true);
+                        onComplete({
+                            score: latest.overallBand,
+                            band: latest.overallBand
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking writing completion:', error);
+            }
+        };
+        
+        checkCompletion();
+        const interval = setInterval(checkCompletion, 2000);
+        
+        const handleStorageChange = (e) => {
+            if (e.key === 'ielts-writing-history') {
+                checkCompletion();
+            }
+        };
+        
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('progressUpdated', checkCompletion);
+        
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('progressUpdated', checkCompletion);
+        };
+    }, [onComplete, completed]);
+    
+    return <WritingPracticeView />;
+}
+
+function SpeakingTestWrapper({ onComplete }) {
+    const [completed, setCompleted] = useState(false);
+    
+    useEffect(() => {
+        if (completed) return;
+        
+        const checkCompletion = () => {
+            try {
+                const history = JSON.parse(localStorage.getItem('ielts-speaking-history') || '[]');
+                if (history.length > 0) {
+                    const latest = history[0];
+                    const entryTime = new Date(latest.submittedAt || latest.createdAt).getTime();
+                    const now = Date.now();
+                    if ((latest.submittedAt || latest.createdAt) && (now - entryTime) < 5 * 60 * 1000 && latest.bandScore !== undefined) {
+                        setCompleted(true);
+                        onComplete({
+                            score: latest.bandScore || 0,
+                            band: latest.bandScore || 0
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking speaking completion:', error);
+            }
+        };
+        
+        checkCompletion();
+        const interval = setInterval(checkCompletion, 2000);
+        
+        const handleStorageChange = (e) => {
+            if (e.key === 'ielts-speaking-history') {
+                checkCompletion();
+            }
+        };
+        
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('progressUpdated', checkCompletion);
+        
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('progressUpdated', checkCompletion);
+        };
+    }, [onComplete, completed]);
+    
+    return <SpeakingPracticeView />;
 }
