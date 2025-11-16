@@ -91,7 +91,7 @@ function formatSeconds(totalSeconds) {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export function WritingPracticeView() {
+export function WritingPracticeView({ embedded = false }) {
     const [activeTaskId, setActiveTaskId] = useState("task1-academic");
     const [currentPrompt, setCurrentPrompt] = useState(() => getRandomPrompt("task1-academic"));
     const [sessionStatus, setSessionStatus] = useState("idle"); // idle | running | time-up | completed
@@ -282,9 +282,9 @@ export function WritingPracticeView() {
 
     const taskPool = questionPools[activeTaskId] || [];
 
-    return (
-        <AppLayout>
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-violet-50 via-white to-purple-50 min-h-screen">
+    const mainContent = (
+        <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-violet-50 via-white to-purple-50 min-h-screen">
+            {!embedded && (
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
                         <h1 className="text-3xl md:text-4xl font-extrabold text-violet-700">Writing Practice</h1>
@@ -299,6 +299,7 @@ export function WritingPracticeView() {
                         ← Back to Dashboard
                     </a>
                 </div>
+            )}
 
                 <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 max-w-7xl mx-auto">
                     <Panel
@@ -602,8 +603,9 @@ export function WritingPracticeView() {
                     )}
                 </Panel>
             </div>
-        </AppLayout>
     );
+
+    return embedded ? mainContent : <AppLayout>{mainContent}</AppLayout>;
 }
 
 function TimerBadge({ label, value, icon }) {

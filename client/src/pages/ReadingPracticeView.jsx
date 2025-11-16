@@ -293,7 +293,7 @@ function HighlightList({ highlights, onUpdateNote, onRemove }) {
     );
 }
 
-export function ReadingPracticeView() {
+export function ReadingPracticeView({ embedded = false }) {
     const [availableSets, setAvailableSets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
@@ -571,24 +571,23 @@ export function ReadingPracticeView() {
 
     // Ensure activeSet exists before rendering
     if (!activeSet) {
-        return (
-            <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen flex items-center justify-center">
-                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
-                        <h1 className="text-3xl font-extrabold text-amber-700">Generating Reading Test</h1>
-                        <p className="text-slate-600 text-sm md:text-base">
-                            {generating ? "Creating AI-generated IELTS Reading test for you..." : "Loading..."}
-                        </p>
-                    </Panel>
-                </div>
-            </AppLayout>
+        const loadingContent = (
+            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen flex items-center justify-center">
+                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
+                    <h1 className="text-3xl font-extrabold text-amber-700">Generating Reading Test</h1>
+                    <p className="text-slate-600 text-sm md:text-base">
+                        {generating ? "Creating AI-generated IELTS Reading test for you..." : "Loading..."}
+                    </p>
+                </Panel>
+            </div>
         );
+        return embedded ? loadingContent : <AppLayout>{loadingContent}</AppLayout>;
     }
 
-    return (
-        <AppLayout>
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen">
+    const mainContent = (
+        <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen">
+            {!embedded && (
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
                         <h1 className="text-3xl md:text-4xl font-extrabold text-amber-700">Reading Practice</h1>
@@ -603,6 +602,7 @@ export function ReadingPracticeView() {
                         ← Back to Dashboard
                     </a>
                 </div>
+            )}
 
                 <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 max-w-7xl mx-auto">
                     <Panel title="Test Controls" className="space-y-5 bg-white/80 backdrop-blur rounded-2xl shadow-md">
@@ -981,8 +981,9 @@ export function ReadingPracticeView() {
                     )}
                 </Panel>
             </div>
-        </AppLayout>
     );
+
+    return embedded ? mainContent : <AppLayout>{mainContent}</AppLayout>;
 }
 
 function QuestionFeedback({ feedback }) {

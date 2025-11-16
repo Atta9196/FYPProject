@@ -24,7 +24,7 @@ function saveHistory(entries) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
-export function SpeakingPracticeView() {
+export function SpeakingPracticeView({ embedded = false }) {
     // Mode selection state
     const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
     
@@ -401,9 +401,8 @@ export function SpeakingPracticeView() {
 
     // Mode Selection Screen
     if (!selectedMode) {
-        return (
-            <AppLayout>
-                <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
+        const modeSelectionContent = (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
                     <div className="max-w-4xl w-full">
                         {/* Title */}
                         <div className="text-center mb-12">
@@ -515,28 +514,29 @@ export function SpeakingPracticeView() {
                         </div>
                     </div>
                 </div>
-            </AppLayout>
         );
+        return embedded ? modeSelectionContent : <AppLayout>{modeSelectionContent}</AppLayout>;
     }
 
     // Record & Submit Mode
     if (selectedMode === 'record') {
-    return (
-        <AppLayout>
+        const recordModeContent = (
             <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-blue-50 via-white to-indigo-50 min-h-screen">
                     {/* Header */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl md:text-4xl font-extrabold text-blue-700">Record & Submit Practice</h1>
-                            <p className="text-slate-600 mt-2">Record your response and get detailed AI feedback</p>
+                    {!embedded && (
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-3xl md:text-4xl font-extrabold text-blue-700">Record & Submit Practice</h1>
+                                <p className="text-slate-600 mt-2">Record your response and get detailed AI feedback</p>
+                            </div>
+                            <button
+                                onClick={resetToModeSelection}
+                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                            >
+                                ← Back to Modes
+                            </button>
                         </div>
-                        <button
-                            onClick={resetToModeSelection}
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                        >
-                            ← Back to Modes
-                        </button>
-                </div>
+                    )}
 
                     {/* Status Bar */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm max-w-4xl mx-auto">
@@ -693,28 +693,29 @@ export function SpeakingPracticeView() {
                         </Panel>
                     </div>
                 </div>
-            </AppLayout>
         );
+        return embedded ? recordModeContent : <AppLayout>{recordModeContent}</AppLayout>;
     }
 
     // Real-time Mode
     if (selectedMode === 'realtime') {
-        return (
-            <AppLayout>
-                <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
+        const realtimeModeContent = (
+            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
                     {/* Header */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl md:text-4xl font-extrabold text-green-700">Real-time Speaking Practice</h1>
-                            <p className="text-slate-600 mt-2">Have a natural conversation with an AI IELTS examiner</p>
+                    {!embedded && (
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-3xl md:text-4xl font-extrabold text-green-700">Real-time Speaking Practice</h1>
+                                <p className="text-slate-600 mt-2">Have a natural conversation with an AI IELTS examiner</p>
+                            </div>
+                            <button
+                                onClick={resetToModeSelection}
+                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                            >
+                                ← Back to Modes
+                            </button>
                         </div>
-                        <button
-                            onClick={resetToModeSelection}
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                        >
-                            ← Back to Modes
-                        </button>
-                    </div>
+                    )}
 
                     <div className="max-w-4xl mx-auto">
                         {!isRealtimeActive ? (
@@ -840,28 +841,29 @@ export function SpeakingPracticeView() {
                         )}
                     </div>
                 </div>
-            </AppLayout>
         );
+        return embedded ? realtimeModeContent : <AppLayout>{realtimeModeContent}</AppLayout>;
     }
 
     // Voice Conversation Mode
     if (selectedMode === 'voice') {
-        return (
-            <AppLayout>
-                <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-purple-50 via-white to-pink-50 min-h-screen">
+        const voiceModeContent = (
+            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-purple-50 via-white to-pink-50 min-h-screen">
                     {/* Header */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl md:text-4xl font-extrabold text-purple-700">Voice Conversation</h1>
-                            <p className="text-slate-600 mt-2">Have a real-time voice conversation with an AI IELTS examiner</p>
+                    {!embedded && (
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-3xl md:text-4xl font-extrabold text-purple-700">Voice Conversation</h1>
+                                <p className="text-slate-600 mt-2">Have a real-time voice conversation with an AI IELTS examiner</p>
+                            </div>
+                            <button
+                                onClick={resetToModeSelection}
+                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                            >
+                                ← Back to Modes
+                            </button>
                         </div>
-                        <button
-                            onClick={resetToModeSelection}
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                        >
-                            ← Back to Modes
-                        </button>
-                    </div>
+                    )}
 
                     <div className="max-w-4xl mx-auto">
                         <Panel title="Real-time Voice Conversation" className="bg-white/80 backdrop-blur rounded-2xl shadow-md">
@@ -869,9 +871,9 @@ export function SpeakingPracticeView() {
                     </Panel>
                 </div>
             </div>
-        </AppLayout>
-    );
-}
+        );
+        return embedded ? voiceModeContent : <AppLayout>{voiceModeContent}</AppLayout>;
+    }
 
     return null;
 }

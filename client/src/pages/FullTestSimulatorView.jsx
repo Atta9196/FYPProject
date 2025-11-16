@@ -377,113 +377,111 @@ export function FullTestSimulatorView() {
         );
     }
     
-    // Render current module
+    // Render current module - NO AppLayout to avoid duplicate sidebar
     return (
-        <AppLayout>
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
-                {/* Test Header */}
-                <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-                    <div className="max-w-7xl mx-auto px-4 py-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <h1 className="text-xl font-bold text-slate-800">IELTS Full Test</h1>
-                                <div className="flex items-center gap-2">
-                                    {moduleOrder.map((module, index) => (
-                                        <div
-                                            key={module}
-                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
-                                                index < currentModuleIndex
-                                                    ? 'bg-emerald-500 text-white'
-                                                    : index === currentModuleIndex
-                                                    ? 'bg-indigo-600 text-white'
-                                                    : 'bg-slate-200 text-slate-500'
-                                            }`}
-                                        >
-                                            {index + 1}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                    <p className="text-xs text-slate-500">Overall Time</p>
-                                    <p className="text-lg font-bold text-slate-800">{formatTime(overallTimer)}</p>
-                                </div>
-                                {currentModule && (
-                                    <div className="text-right">
-                                        <p className="text-xs text-slate-500 capitalize">{currentModule} Time</p>
-                                        <p className="text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+            {/* Test Header */}
+            <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+                <div className="max-w-7xl mx-auto px-4 py-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <h1 className="text-xl font-bold text-slate-800">IELTS Full Test</h1>
+                            <div className="flex items-center gap-2">
+                                {moduleOrder.map((module, index) => (
+                                    <div
+                                        key={module}
+                                        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+                                            index < currentModuleIndex
+                                                ? 'bg-emerald-500 text-white'
+                                                : index === currentModuleIndex
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'bg-slate-200 text-slate-500'
+                                        }`}
+                                    >
+                                        {index + 1}
                                     </div>
-                                )}
-                                <button
-                                    onClick={() => {
-                                        if (window.confirm('Are you sure you want to exit the test? Your progress will be saved.')) {
-                                            handleTestComplete();
-                                        }
-                                    }}
-                                    className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
-                                >
-                                    Exit Test
-                                </button>
+                                ))}
                             </div>
                         </div>
-                        
-                        {/* Progress Bar */}
-                        <div className="mt-4">
-                            <div className="w-full bg-slate-200 rounded-full h-2">
-                                <div
-                                    className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
-                                    style={{ width: `${progress}%` }}
-                                />
+                        <div className="flex items-center gap-4">
+                            <div className="text-right">
+                                <p className="text-xs text-slate-500">Overall Time</p>
+                                <p className="text-lg font-bold text-slate-800">{formatTime(overallTimer)}</p>
                             </div>
-                            <p className="text-xs text-slate-500 mt-1">
-                                Progress: {Math.round(progress)}% ({Object.values(moduleStatus).filter(m => m.completed).length}/4 modules)
-                            </p>
+                            {currentModule && (
+                                <div className="text-right">
+                                    <p className="text-xs text-slate-500 capitalize">{currentModule} Time</p>
+                                    <p className="text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => {
+                                    if (window.confirm('Are you sure you want to exit the test? Your progress will be saved.')) {
+                                        handleTestComplete();
+                                    }
+                                }}
+                                className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                                Exit Test
+                            </button>
                         </div>
                     </div>
-                </div>
-                
-                {/* Module Content */}
-                <div className="max-w-7xl mx-auto p-4">
-                    {currentModule === 'listening' && (
-                        <ListeningTestWrapper
-                            onComplete={(results) => {
-                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
-                                    detail: { module: 'listening', results }
-                                }));
-                            }}
-                        />
-                    )}
-                    {currentModule === 'reading' && (
-                        <ReadingTestWrapper
-                            onComplete={(results) => {
-                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
-                                    detail: { module: 'reading', results }
-                                }));
-                            }}
-                        />
-                    )}
-                    {currentModule === 'writing' && (
-                        <WritingTestWrapper
-                            onComplete={(results) => {
-                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
-                                    detail: { module: 'writing', results }
-                                }));
-                            }}
-                        />
-                    )}
-                    {currentModule === 'speaking' && (
-                        <SpeakingTestWrapper
-                            onComplete={(results) => {
-                                window.dispatchEvent(new CustomEvent('moduleCompleted', {
-                                    detail: { module: 'speaking', results }
-                                }));
-                            }}
-                        />
-                    )}
+                    
+                    {/* Progress Bar */}
+                    <div className="mt-4">
+                        <div className="w-full bg-slate-200 rounded-full h-2">
+                            <div
+                                className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Progress: {Math.round(progress)}% ({Object.values(moduleStatus).filter(m => m.completed).length}/4 modules)
+                        </p>
+                    </div>
                 </div>
             </div>
-        </AppLayout>
+            
+            {/* Module Content - Render without AppLayout wrapper */}
+            <div className="max-w-7xl mx-auto p-4">
+                {currentModule === 'listening' && (
+                    <ListeningTestWrapper
+                        onComplete={(results) => {
+                            window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                detail: { module: 'listening', results }
+                            }));
+                        }}
+                    />
+                )}
+                {currentModule === 'reading' && (
+                    <ReadingTestWrapper
+                        onComplete={(results) => {
+                            window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                detail: { module: 'reading', results }
+                            }));
+                        }}
+                    />
+                )}
+                {currentModule === 'writing' && (
+                    <WritingTestWrapper
+                        onComplete={(results) => {
+                            window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                detail: { module: 'writing', results }
+                            }));
+                        }}
+                    />
+                )}
+                {currentModule === 'speaking' && (
+                    <SpeakingTestWrapper
+                        onComplete={(results) => {
+                            window.dispatchEvent(new CustomEvent('moduleCompleted', {
+                                detail: { module: 'speaking', results }
+                            }));
+                        }}
+                    />
+                )}
+            </div>
+        </div>
     );
 }
 
@@ -535,7 +533,7 @@ function ListeningTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed]);
     
-    return <ListeningPracticeView />;
+    return <ListeningPracticeView embedded={true} />;
 }
 
 function ReadingTestWrapper({ onComplete }) {
@@ -583,7 +581,7 @@ function ReadingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed]);
     
-    return <ReadingPracticeView />;
+    return <ReadingPracticeView embedded={true} />;
 }
 
 function WritingTestWrapper({ onComplete }) {
@@ -631,7 +629,7 @@ function WritingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed]);
     
-    return <WritingPracticeView />;
+    return <WritingPracticeView embedded={true} />;
 }
 
 function SpeakingTestWrapper({ onComplete }) {
@@ -679,5 +677,5 @@ function SpeakingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed]);
     
-    return <SpeakingPracticeView />;
+    return <SpeakingPracticeView embedded={true} />;
 }

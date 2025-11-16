@@ -144,7 +144,7 @@ const phaseLabels = {
     completed: "Completed"
 };
 
-export function ListeningPracticeView() {
+export function ListeningPracticeView({ embedded = false }) {
     const [listeningSections, setListeningSections] = useState([]);
     const [totalListeningQuestions, setTotalListeningQuestions] = useState(40);
     const [loading, setLoading] = useState(true);
@@ -429,63 +429,60 @@ export function ListeningPracticeView() {
     }, [sectionStates, updateSectionState, handleSubmitSection]);
 
     if (loading || generating) {
-        return (
-            <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
-                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
-                        <h1 className="text-3xl font-extrabold text-sky-700">Generating Listening Test</h1>
-                        <p className="text-slate-600 text-sm md:text-base">
-                            {generating ? "Creating AI-generated IELTS Listening test for you..." : "Loading..."}
-                        </p>
-                    </Panel>
-                </div>
-            </AppLayout>
+        const loadingContent = (
+            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
+                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
+                    <h1 className="text-3xl font-extrabold text-sky-700">Generating Listening Test</h1>
+                    <p className="text-slate-600 text-sm md:text-base">
+                        {generating ? "Creating AI-generated IELTS Listening test for you..." : "Loading..."}
+                    </p>
+                </Panel>
+            </div>
         );
+        return embedded ? loadingContent : <AppLayout>{loadingContent}</AppLayout>;
     }
 
     if (!activeSection || listeningSections.length === 0) {
-        return (
-            <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
-                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4">
-                        <h1 className="text-3xl font-extrabold text-sky-700 text-center">Listening Practice</h1>
-                        <p className="text-slate-600 text-sm md:text-base text-center">
-                            Failed to load listening test. Please try generating a new one.
-                        </p>
-                        {errorMessage && (
-                            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                                {errorMessage}
-                            </div>
-                        )}
-                        <div className="text-center">
-                            <button
-                                onClick={loadAIGeneratedListening}
-                                disabled={generating}
-                                className="px-6 py-3 bg-sky-600 text-white rounded-lg font-semibold hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {generating ? "🔄 Generating..." : "✨ Generate New Test"}
-                            </button>
+        const errorContent = (
+            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4">
+                    <h1 className="text-3xl font-extrabold text-sky-700 text-center">Listening Practice</h1>
+                    <p className="text-slate-600 text-sm md:text-base text-center">
+                        Failed to load listening test. Please try generating a new one.
+                    </p>
+                    {errorMessage && (
+                        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                            {errorMessage}
                         </div>
-                    </Panel>
-                </div>
-            </AppLayout>
+                    )}
+                    <div className="text-center">
+                        <button
+                            onClick={loadAIGeneratedListening}
+                            disabled={generating}
+                            className="px-6 py-3 bg-sky-600 text-white rounded-lg font-semibold hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {generating ? "🔄 Generating..." : "✨ Generate New Test"}
+                        </button>
+                    </div>
+                </Panel>
+            </div>
         );
+        return embedded ? errorContent : <AppLayout>{errorContent}</AppLayout>;
     }
 
     const activeState = sectionStates[activeSection.id];
     if (!activeState) {
-        return (
-            <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
-                    <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
-                        <h1 className="text-3xl font-extrabold text-sky-700">Initializing Test</h1>
-                        <p className="text-slate-600 text-sm md:text-base">Setting up listening test sections...</p>
-                    </Panel>
-                </div>
-            </AppLayout>
+        const initContent = (
+            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
+                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
+                    <h1 className="text-3xl font-extrabold text-sky-700">Initializing Test</h1>
+                    <p className="text-slate-600 text-sm md:text-base">Setting up listening test sections...</p>
+                </Panel>
+            </div>
         );
+        return embedded ? initContent : <AppLayout>{initContent}</AppLayout>;
     }
     const playbackProgress =
         1 - activeState.timeRemaining / (activeSection.durationSeconds || 1);
@@ -496,9 +493,9 @@ export function ListeningPracticeView() {
     const submitDisabled =
         activeState.submitted || (activeState.phase !== "review" && activeState.phase !== "completed");
 
-    return (
-        <AppLayout>
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+    const mainContent = (
+        <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+            {!embedded && (
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
                         <h1 className="text-3xl md:text-4xl font-extrabold text-sky-700">Listening Practice</h1>
@@ -522,6 +519,7 @@ export function ListeningPracticeView() {
                         </a>
                     </div>
                 </div>
+            )}
 
                 <Panel title="Practice Summary" className="bg-white/90 backdrop-blur rounded-2xl shadow-md">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -682,8 +680,9 @@ export function ListeningPracticeView() {
                     </Panel>
                 </div>
             </div>
-        </AppLayout>
     );
+
+    return embedded ? mainContent : <AppLayout>{mainContent}</AppLayout>;
 }
 
 function TimerBar({ label, progress, remaining, accent }) {
