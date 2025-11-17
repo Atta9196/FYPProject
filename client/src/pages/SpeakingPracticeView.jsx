@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
+import { useAuth } from "../contexts/AuthContext";
+import { getStorageKeyForModule } from "../services/progressService";
 import MicButton from "../features/speaking/components/MicButton";
 import { VoiceConversation } from "../features/speaking/components/VoiceConversation";
 
-const STORAGE_KEY = "ielts-speaking-history";
+function getStorageKey(userId) {
+    return getStorageKeyForModule('speaking', userId) || "ielts-speaking-history";
+}
 
-function loadHistory() {
+function loadHistory(userId) {
     if (typeof window === "undefined") return [];
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const key = getStorageKey(userId);
+        const raw = window.localStorage.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
@@ -19,12 +24,14 @@ function loadHistory() {
     }
 }
 
-function saveHistory(entries) {
+function saveHistory(entries, userId) {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const key = getStorageKey(userId);
+    window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
 export function SpeakingPracticeView({ embedded = false }) {
+    const { user } = useAuth();
     // Mode selection state
     const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
     
@@ -166,9 +173,10 @@ export function SpeakingPracticeView({ embedded = false }) {
                     type: 'recorded_practice'
                 };
 
-                const existingHistory = loadHistory();
+                const userId = user?.email || user?.id || null;
+                const existingHistory = loadHistory(userId);
                 const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                saveHistory(updatedHistory);
+                saveHistory(updatedHistory, userId);
 
                 // Dispatch event to update dashboards in real-time
                 window.dispatchEvent(new Event('progressUpdated'));
@@ -349,9 +357,10 @@ export function SpeakingPracticeView({ embedded = false }) {
                     type: 'realtime_practice'
                 };
 
-                const existingHistory = loadHistory();
+                const userId = user?.email || user?.id || null;
+                const existingHistory = loadHistory(userId);
                 const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                saveHistory(updatedHistory);
+                saveHistory(updatedHistory, userId);
 
                 // Dispatch event to update dashboards in real-time
                 window.dispatchEvent(new Event('progressUpdated'));

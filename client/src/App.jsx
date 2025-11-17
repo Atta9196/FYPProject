@@ -8,7 +8,6 @@ import GoogleAuthProvider from "./components/GoogleAuth/GoogleAuthProvider";
 
 // Pages
 import LandingPage from "./pages/LandingPage";
-import HomeLanding from "./pages/HomeLanding";
 import { DashboardView } from "./pages/DashboardView";
 import { SpeakingPracticeView } from "./pages/SpeakingPracticeView";
 import { ListeningPracticeView } from "./pages/ListeningPracticeView";
@@ -20,6 +19,8 @@ import { PerformanceDashboardView } from "./pages/PerformanceDashboardView";
 import { ProfileView } from "./pages/ProfileView";
 import { SupportView } from "./pages/SupportView";
 import AboutIELTSCoachPage from "./pages/AboutPage";
+import ServicesPage from "./pages/ServicesPage";
+import ContactPage from "./pages/ContactPage";
 import LoginPage from "./pages/login";
 import RegisterPage from "./pages/register";
 
@@ -36,7 +37,6 @@ function App() {
               <Routes>
                 {/* ✅ Public Routes */}
                 <Route path="/" element={<LandingPage />} />
-                <Route path="/home" element={<HomeLanding />} />
 
                 {/* ✅ Auth Routes */}
                 <Route
@@ -139,6 +139,8 @@ function App() {
                 />
 
                 <Route path="/about" element={<AboutIELTSCoachPage />} />
+                <Route path="/services" element={<ServicesPage />} />
+                <Route path="/contact" element={<ContactPage />} />
 
                 {/* ✅ Catch-all route */}
                 <Route path="*" element={<Navigate to="/" replace />} />

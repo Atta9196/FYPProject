@@ -2,14 +2,14 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { getStorageKeyForModule } from "../services/progressService";
 
 // Import module components (we'll embed them)
 import { ReadingPracticeView } from "./ReadingPracticeView";
 import { WritingPracticeView } from "./WritingPracticeView";
 import { ListeningPracticeView } from "./ListeningPracticeView";
 import { SpeakingPracticeView } from "./SpeakingPracticeView";
-
-const STORAGE_KEY = "ielts-full-test-history";
 
 // Test timing (in seconds)
 const MODULE_TIMES = {
@@ -21,26 +21,39 @@ const MODULE_TIMES = {
 
 const TOTAL_TEST_TIME = Object.values(MODULE_TIMES).reduce((sum, time) => sum + time, 0);
 
-function loadHistory() {
+function getStorageKey(userId, module) {
+    if (module) {
+        return getStorageKeyForModule(module, userId) || `ielts-${module}-history`;
+    }
+    // For full test history, use a user-specific key
+    if (!userId) return "ielts-full-test-history";
+    const userIdentifier = userId.replace(/[^a-zA-Z0-9]/g, '_');
+    return `ielts-full-test-history_${userIdentifier}`;
+}
+
+function loadHistory(userId, module = null) {
     if (typeof window === "undefined") return [];
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const key = getStorageKey(userId, module);
+        const raw = window.localStorage.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
     } catch (error) {
-        console.warn("Failed to parse full test history", error);
+        console.warn("Failed to parse history", error);
         return [];
     }
 }
 
-function saveHistory(entries) {
+function saveHistory(entries, userId, module = null) {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const key = getStorageKey(userId, module);
+    window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
 export function FullTestSimulatorView() {
     const navigate = useNavigate();
+    const { user } = useAuth();
     
     // Test state
     const [testStarted, setTestStarted] = useState(false);
@@ -133,6 +146,7 @@ export function FullTestSimulatorView() {
             : 0;
         
         // Save to history
+        const userId = user?.email || user?.id || null;
         const historyEntry = {
             id: Date.now(),
             completedAt: new Date().toISOString(),
@@ -141,9 +155,9 @@ export function FullTestSimulatorView() {
             totalTime: TOTAL_TEST_TIME - overallTimer
         };
         
-        const existingHistory = loadHistory();
+        const existingHistory = loadHistory(userId);
         const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-        saveHistory(updatedHistory);
+        saveHistory(updatedHistory, userId);
         
         // Dispatch event to update dashboards
         window.dispatchEvent(new Event('progressUpdated'));
@@ -487,14 +501,18 @@ export function FullTestSimulatorView() {
 
 // Wrapper components to integrate module views
 function ListeningTestWrapper({ onComplete }) {
+    const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
     useEffect(() => {
         if (completed) return;
         
+        const userId = user?.email || user?.id || null;
+        const storageKey = getStorageKeyForModule('listening', userId) || 'ielts-listening-history';
+        
         const checkCompletion = () => {
             try {
-                const history = JSON.parse(localStorage.getItem('ielts-listening-history') || '[]');
+                const history = loadHistory(userId, 'listening');
                 if (history.length > 0) {
                     const latest = history[0];
                     // Check if this entry was created during this test session (within last 5 minutes)
@@ -518,7 +536,7 @@ function ListeningTestWrapper({ onComplete }) {
         const interval = setInterval(checkCompletion, 2000);
         
         const handleStorageChange = (e) => {
-            if (e.key === 'ielts-listening-history') {
+            if (e.key === storageKey) {
                 checkCompletion();
             }
         };
@@ -531,20 +549,24 @@ function ListeningTestWrapper({ onComplete }) {
             window.removeEventListener('storage', handleStorageChange);
             window.removeEventListener('progressUpdated', checkCompletion);
         };
-    }, [onComplete, completed]);
+    }, [onComplete, completed, user]);
     
     return <ListeningPracticeView embedded={true} />;
 }
 
 function ReadingTestWrapper({ onComplete }) {
+    const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
     useEffect(() => {
         if (completed) return;
         
+        const userId = user?.email || user?.id || null;
+        const storageKey = getStorageKeyForModule('reading', userId) || 'ielts-reading-history';
+        
         const checkCompletion = () => {
             try {
-                const history = JSON.parse(localStorage.getItem('ielts-reading-history') || '[]');
+                const history = loadHistory(userId, 'reading');
                 if (history.length > 0) {
                     const latest = history[0];
                     const entryTime = new Date(latest.submittedAt).getTime();
@@ -566,7 +588,7 @@ function ReadingTestWrapper({ onComplete }) {
         const interval = setInterval(checkCompletion, 2000);
         
         const handleStorageChange = (e) => {
-            if (e.key === 'ielts-reading-history') {
+            if (e.key === storageKey) {
                 checkCompletion();
             }
         };
@@ -579,20 +601,24 @@ function ReadingTestWrapper({ onComplete }) {
             window.removeEventListener('storage', handleStorageChange);
             window.removeEventListener('progressUpdated', checkCompletion);
         };
-    }, [onComplete, completed]);
+    }, [onComplete, completed, user]);
     
     return <ReadingPracticeView embedded={true} />;
 }
 
 function WritingTestWrapper({ onComplete }) {
+    const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
     useEffect(() => {
         if (completed) return;
         
+        const userId = user?.email || user?.id || null;
+        const storageKey = getStorageKeyForModule('writing', userId) || 'ielts-writing-history';
+        
         const checkCompletion = () => {
             try {
-                const history = JSON.parse(localStorage.getItem('ielts-writing-history') || '[]');
+                const history = loadHistory(userId, 'writing');
                 if (history.length > 0) {
                     const latest = history[0];
                     const entryTime = new Date(latest.submittedAt).getTime();
@@ -614,7 +640,7 @@ function WritingTestWrapper({ onComplete }) {
         const interval = setInterval(checkCompletion, 2000);
         
         const handleStorageChange = (e) => {
-            if (e.key === 'ielts-writing-history') {
+            if (e.key === storageKey) {
                 checkCompletion();
             }
         };
@@ -627,20 +653,24 @@ function WritingTestWrapper({ onComplete }) {
             window.removeEventListener('storage', handleStorageChange);
             window.removeEventListener('progressUpdated', checkCompletion);
         };
-    }, [onComplete, completed]);
+    }, [onComplete, completed, user]);
     
     return <WritingPracticeView embedded={true} />;
 }
 
 function SpeakingTestWrapper({ onComplete }) {
+    const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
     useEffect(() => {
         if (completed) return;
         
+        const userId = user?.email || user?.id || null;
+        const storageKey = getStorageKeyForModule('speaking', userId) || 'ielts-speaking-history';
+        
         const checkCompletion = () => {
             try {
-                const history = JSON.parse(localStorage.getItem('ielts-speaking-history') || '[]');
+                const history = loadHistory(userId, 'speaking');
                 if (history.length > 0) {
                     const latest = history[0];
                     const entryTime = new Date(latest.submittedAt || latest.createdAt).getTime();
@@ -662,7 +692,7 @@ function SpeakingTestWrapper({ onComplete }) {
         const interval = setInterval(checkCompletion, 2000);
         
         const handleStorageChange = (e) => {
-            if (e.key === 'ielts-speaking-history') {
+            if (e.key === storageKey) {
                 checkCompletion();
             }
         };
@@ -675,7 +705,7 @@ function SpeakingTestWrapper({ onComplete }) {
             window.removeEventListener('storage', handleStorageChange);
             window.removeEventListener('progressUpdated', checkCompletion);
         };
-    }, [onComplete, completed]);
+    }, [onComplete, completed, user]);
     
     return <SpeakingPracticeView embedded={true} />;
 }

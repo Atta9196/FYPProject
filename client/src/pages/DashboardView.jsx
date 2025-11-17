@@ -54,9 +54,10 @@ export function DashboardView() {
     // Load progress data
     const loadProgressData = () => {
         try {
-            const stats = getOverallStats();
-            const summary = getStatsSummary();
-            const activities = getRecentActivity(4);
+            const userId = user?.email || user?.id || null;
+            const stats = getOverallStats(userId);
+            const summary = getStatsSummary(userId);
+            const activities = getRecentActivity(4, userId);
 
             // Calculate progress percentage (based on target band of 8.0)
             const targetBand = 8.0;
@@ -128,10 +129,17 @@ export function DashboardView() {
 
         // Listen for storage changes (when new results are saved)
         const handleStorageChange = (e) => {
-            if (e.key === 'ielts-reading-history' || 
-                e.key === 'ielts-writing-history' || 
-                e.key === 'ielts-listening-history' ||
-                e.key === 'ielts-speaking-history') {
+            const userId = user?.email || user?.id || null;
+            if (!userId) return;
+            
+            // Check if the changed key belongs to the current user
+            const userIdentifier = userId.replace(/[^a-zA-Z0-9]/g, '_');
+            if (e.key && (
+                e.key.includes('ielts-reading-history') || 
+                e.key.includes('ielts-writing-history') || 
+                e.key.includes('ielts-listening-history') ||
+                e.key.includes('ielts-speaking-history')
+            ) && e.key.includes(userIdentifier)) {
                 loadProgressData();
             }
         };
@@ -151,7 +159,7 @@ export function DashboardView() {
             window.removeEventListener('progressUpdated', handleProgressUpdate);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [user]);
 
     const motivationalQuotes = [
         "Keep practicing — consistency builds fluency!",

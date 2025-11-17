@@ -13,8 +13,35 @@
   .animate-fade-up { @apply opacity-0 translate-y-4; animation: fadeUp .6s ease-out forwards; }
   .animate-fade-in { @apply opacity-0; animation: fadeIn .6s ease-out forwards; }
   .animate-pop { @apply opacity-0 scale-95; animation: popIn .4s ease-out forwards; }
+  .animate-slide-in-left { @apply opacity-0 -translate-x-8; animation: slideInLeft .8s ease-out forwards; }
+  .animate-slide-in-right { @apply opacity-0 translate-x-8; animation: slideInRight .8s ease-out forwards; }
+  .animate-scale-in { @apply opacity-0 scale-90; animation: scaleIn .6s ease-out forwards; }
+  .animate-float { animation: float 3s ease-in-out infinite; }
 }
 
-@keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-@keyframes fadeIn { to { opacity: 1; } }
-@keyframes popIn { to { opacity: 1; transform: scale(1); } }
+@keyframes fadeUp { 
+  to { opacity: 1; transform: translateY(0); } 
+}
+@keyframes fadeIn { 
+  to { opacity: 1; } 
+}
+@keyframes popIn { 
+  to { opacity: 1; transform: scale(1); } 
+}
+@keyframes slideInLeft { 
+  to { opacity: 1; transform: translateX(0); } 
+}
+@keyframes slideInRight { 
+  to { opacity: 1; transform: translateX(0); } 
+}
+@keyframes scaleIn { 
+  to { opacity: 1; transform: scale(1); } 
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+html {
+  scroll-behavior: smooth;
+}

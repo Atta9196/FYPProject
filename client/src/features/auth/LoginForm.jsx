@@ -102,25 +102,37 @@ export default function LoginForm() {
     }
 
     return (
-        <div className="max-w-md w-full bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_12px_40px_rgba(2,6,23,0.12)] rounded-3xl p-8 animate-fade-in">
-            <div className="text-center mb-6">
-                <h2 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600">Welcome back</h2>
-                <p className="text-gray-500 text-sm">Sign in to continue your IELTS journey</p>
+        <div className="max-w-md w-full bg-white/90 backdrop-blur-xl border border-purple-200/50 shadow-2xl rounded-3xl p-8 animate-fade-in">
+            <div className="text-center mb-8">
+                <h2 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-indigo-600 mb-2">Welcome back</h2>
+                <p className="text-slate-600 text-sm">Sign in to continue your IELTS journey</p>
             </div>
-            {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-red-600 text-sm">{error}</p>
+                </div>
+            )}
+            <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                    <input type="email" name="email" placeholder="you@example.com" className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={form.email} onChange={handleChange} required />
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Email</label>
+                    <input 
+                        type="email" 
+                        name="email" 
+                        placeholder="you@example.com" 
+                        className="w-full p-3.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-300 hover:border-purple-400" 
+                        value={form.email} 
+                        onChange={handleChange} 
+                        required 
+                    />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Password</label>
                     <div className="relative">
                         <input
                             type={showPassword ? 'text' : 'password'}
                             name="password"
                             placeholder="••••••••"
-                            className="w-full p-3 pr-12 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            className="w-full p-3.5 pr-12 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all duration-300 hover:border-purple-400"
                             value={form.password}
                             onChange={handleChange}
                             required
@@ -140,7 +152,11 @@ export default function LoginForm() {
                     </div>
                 </div>
                 <ForgotPasswordLink />
-                <button type="submit" disabled={submitting} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 transition text-white py-3 rounded-xl font-medium disabled:opacity-60 shadow hover:shadow-lg">
+                <button 
+                    type="submit" 
+                    disabled={submitting} 
+                    className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 text-white py-3.5 rounded-xl font-semibold disabled:opacity-60 shadow-lg hover:shadow-xl hover:scale-[1.02] transform"
+                >
                     {submitting ? 'Signing in...' : 'Sign in'}
                 </button>
             </form>
@@ -161,7 +177,7 @@ export default function LoginForm() {
                             })
                             .catch((e) => setError(e.message || 'Google sign-in failed'));
                     }}
-                    className="flex items-center justify-center w-full px-4 py-3 border border-slate-200 rounded-xl hover:bg-white transition-colors shadow-sm"
+                    className="flex items-center justify-center w-full px-4 py-3 border border-slate-300 rounded-xl hover:bg-slate-50 transition-all duration-300 shadow-sm hover:shadow-md hover:scale-[1.02] transform"
                 >
                     <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -181,7 +197,7 @@ export default function LoginForm() {
                 <button
                     type="button"
                     onClick={() => navigate('/register')}
-                    className="text-blue-600 hover:underline"
+                    className="text-purple-600 hover:text-purple-700 font-semibold hover:underline transition-colors"
                 >
                     Sign up
                 </button>

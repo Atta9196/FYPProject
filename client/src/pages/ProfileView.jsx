@@ -68,7 +68,8 @@ export function ProfileView() {
     useEffect(() => {
         const loadData = () => {
             try {
-                const data = getAllProgressData();
+                const userId = user?.email || user?.id || null;
+                const data = getAllProgressData(userId);
                 setProgressData(data);
             } catch (error) {
                 console.error("Error loading progress data:", error);

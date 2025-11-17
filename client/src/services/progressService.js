@@ -1,11 +1,40 @@
 // Progress Service - Aggregates real progress data from localStorage and backend
 
-const STORAGE_KEYS = {
-    reading: "ielts-reading-history",
-    writing: "ielts-writing-history",
-    listening: "ielts-listening-history",
-    speaking: "ielts-speaking-history"
-};
+/**
+ * Get user-specific storage key
+ */
+function getUserStorageKey(baseKey, userId) {
+    if (!userId) {
+        // Fallback to non-user-specific key for backward compatibility
+        return baseKey;
+    }
+    // Use email as user identifier (sanitized for localStorage key)
+    const userIdentifier = userId.replace(/[^a-zA-Z0-9]/g, '_');
+    return `${baseKey}_${userIdentifier}`;
+}
+
+/**
+ * Get storage keys for a specific user
+ */
+function getStorageKeys(userId) {
+    const baseKeys = {
+        reading: "ielts-reading-history",
+        writing: "ielts-writing-history",
+        listening: "ielts-listening-history",
+        speaking: "ielts-speaking-history"
+    };
+    
+    if (!userId) {
+        return baseKeys;
+    }
+    
+    return {
+        reading: getUserStorageKey(baseKeys.reading, userId),
+        writing: getUserStorageKey(baseKeys.writing, userId),
+        listening: getUserStorageKey(baseKeys.listening, userId),
+        speaking: getUserStorageKey(baseKeys.speaking, userId)
+    };
+}
 
 /**
  * Load history from localStorage
@@ -24,13 +53,33 @@ function loadHistory(key) {
 }
 
 /**
- * Get all progress data from all modules
+ * Get user ID from auth context or localStorage
  */
-export function getAllProgressData() {
-    const readingHistory = loadHistory(STORAGE_KEYS.reading);
-    const writingHistory = loadHistory(STORAGE_KEYS.writing);
-    const listeningHistory = loadHistory(STORAGE_KEYS.listening);
-    const speakingHistory = loadHistory(STORAGE_KEYS.speaking);
+function getUserId() {
+    if (typeof window === "undefined") return null;
+    try {
+        const auth = localStorage.getItem('auth');
+        if (auth) {
+            const parsed = JSON.parse(auth);
+            return parsed.user?.email || parsed.user?.id || null;
+        }
+    } catch (error) {
+        console.warn("Failed to get user ID", error);
+    }
+    return null;
+}
+
+/**
+ * Get all progress data from all modules for the current user
+ */
+export function getAllProgressData(userId = null) {
+    const currentUserId = userId || getUserId();
+    const storageKeys = getStorageKeys(currentUserId);
+    
+    const readingHistory = loadHistory(storageKeys.reading);
+    const writingHistory = loadHistory(storageKeys.writing);
+    const listeningHistory = loadHistory(storageKeys.listening);
+    const speakingHistory = loadHistory(storageKeys.speaking);
 
     return {
         reading: readingHistory,
@@ -38,6 +87,26 @@ export function getAllProgressData() {
         listening: listeningHistory,
         speaking: speakingHistory
     };
+}
+
+/**
+ * Get storage key for a specific module and user
+ */
+export function getStorageKeyForModule(module, userId = null) {
+    const currentUserId = userId || getUserId();
+    const baseKeys = {
+        reading: "ielts-reading-history",
+        writing: "ielts-writing-history",
+        listening: "ielts-listening-history",
+        speaking: "ielts-speaking-history"
+    };
+    
+    if (!baseKeys[module]) {
+        console.warn(`Unknown module: ${module}`);
+        return null;
+    }
+    
+    return getUserStorageKey(baseKeys[module], currentUserId);
 }
 
 /**
@@ -83,8 +152,8 @@ function calculateBandScores(history) {
 /**
  * Get overall statistics
  */
-export function getOverallStats() {
-    const progress = getAllProgressData();
+export function getOverallStats(userId = null) {
+    const progress = getAllProgressData(userId);
     
     const readingBands = calculateBandScores(progress.reading);
     const writingBands = calculateBandScores(progress.writing);
@@ -129,8 +198,8 @@ export function getOverallStats() {
 /**
  * Get recent activity from all modules
  */
-export function getRecentActivity(limit = 10) {
-    const progress = getAllProgressData();
+export function getRecentActivity(limit = 10, userId = null) {
+    const progress = getAllProgressData(userId);
     const activities = [];
 
     // Reading activities
@@ -215,8 +284,8 @@ function formatTimeAgo(dateString) {
 /**
  * Get statistics summary
  */
-export function getStatsSummary() {
-    const progress = getAllProgressData();
+export function getStatsSummary(userId = null) {
+    const progress = getAllProgressData(userId);
     
     const totalTests = progress.reading.length + progress.writing.length + progress.listening.length + progress.speaking.length;
     
@@ -292,8 +361,8 @@ function calculateStreak(entries) {
 /**
  * Get band progress over time for charts
  */
-export function getBandProgress(timeframe = '3months') {
-    const progress = getAllProgressData();
+export function getBandProgress(timeframe = '3months', userId = null) {
+    const progress = getAllProgressData(userId);
     const now = new Date();
     let startDate = new Date();
 
@@ -389,8 +458,8 @@ export function getBandProgress(timeframe = '3months') {
 /**
  * Get weekly test completion data
  */
-export function getWeeklyTests() {
-    const progress = getAllProgressData();
+export function getWeeklyTests(userId = null) {
+    const progress = getAllProgressData(userId);
     const allEntries = [
         ...progress.reading,
         ...progress.writing,
@@ -427,8 +496,8 @@ export function getWeeklyTests() {
 /**
  * Get module breakdown statistics
  */
-export function getModuleBreakdown() {
-    const progress = getAllProgressData();
+export function getModuleBreakdown(userId = null) {
+    const progress = getAllProgressData(userId);
 
     const readingBands = progress.reading
         .map(e => parseFloat(e.band || 0))
@@ -512,8 +581,8 @@ export function getModuleBreakdown() {
 /**
  * Get practice history for table
  */
-export function getPracticeHistory(limit = 20) {
-    const progress = getAllProgressData();
+export function getPracticeHistory(limit = 20, userId = null) {
+    const progress = getAllProgressData(userId);
     const allEntries = [];
 
     progress.reading.forEach(entry => {

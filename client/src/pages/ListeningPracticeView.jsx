@@ -1,13 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
+import { useAuth } from "../contexts/AuthContext";
+import { getStorageKeyForModule } from "../services/progressService";
 
-const STORAGE_KEY = "ielts-listening-history";
+function getStorageKey(userId) {
+    return getStorageKeyForModule('listening', userId) || "ielts-listening-history";
+}
 
-function loadHistory() {
+function loadHistory(userId) {
     if (typeof window === "undefined") return [];
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const key = getStorageKey(userId);
+        const raw = window.localStorage.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
@@ -17,9 +22,10 @@ function loadHistory() {
     }
 }
 
-function saveHistory(entries) {
+function saveHistory(entries, userId) {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const key = getStorageKey(userId);
+    window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
 const bandTable = [
@@ -145,6 +151,7 @@ const phaseLabels = {
 };
 
 export function ListeningPracticeView({ embedded = false }) {
+    const { user } = useAuth();
     const [listeningSections, setListeningSections] = useState([]);
     const [totalListeningQuestions, setTotalListeningQuestions] = useState(40);
     const [loading, setLoading] = useState(true);
@@ -343,9 +350,10 @@ export function ListeningPracticeView({ embedded = false }) {
                         submittedAt: new Date().toISOString()
                     };
 
-                    const existingHistory = loadHistory();
+                    const userId = user?.email || user?.id || null;
+                    const existingHistory = loadHistory(userId);
                     const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                    saveHistory(updatedHistory);
+                    saveHistory(updatedHistory, userId);
 
                     // Dispatch event to update dashboards in real-time
                     window.dispatchEvent(new Event('progressUpdated'));

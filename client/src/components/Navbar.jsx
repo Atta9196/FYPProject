@@ -6,7 +6,14 @@ export default function Navbar({ onToggleTheme }) {
     return (
 		<header className="h-16 bg-white/70 backdrop-blur-xl border-b border-slate-200/70 flex items-center justify-between px-4 md:px-6 shadow-sm">
 			<div className="flex items-center gap-4">
-				<Link to="/" className="text-lg font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-sky-500">IELTS Coach</Link>
+				<Link to="/" className="flex items-center gap-3">
+					<img 
+						src="/IeltsCoach logo.jpeg" 
+						alt="IELTS Coach Logo" 
+						className="h-10 w-auto"
+					/>
+					<span className="text-lg font-extrabold text-purple-700">IELTSCoach</span>
+				</Link>
 				<div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white">
 					<Search className="w-4 h-4 text-slate-400" />
 					<input placeholder="Search" className="outline-none text-sm placeholder-slate-400 bg-transparent" />

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import StatCard from "../components/ui/StatCard";
+import { useAuth } from "../contexts/AuthContext";
 import { 
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
     RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
@@ -16,6 +17,7 @@ import {
 } from "../services/progressService";
 
 export function PerformanceDashboardView() {
+    const { user } = useAuth();
     const [selectedTimeframe, setSelectedTimeframe] = useState('3months');
     const [performanceData, setPerformanceData] = useState({
         bandProgress: [
@@ -79,13 +81,14 @@ export function PerformanceDashboardView() {
     // Load performance data
     const loadPerformanceData = () => {
         try {
-            const bandProgress = getBandProgress(selectedTimeframe);
-            const weeklyTests = getWeeklyTests();
-            const moduleBreakdown = getModuleBreakdown();
-            const practiceHistory = getPracticeHistory(20);
+            const userId = user?.email || user?.id || null;
+            const bandProgress = getBandProgress(selectedTimeframe, userId);
+            const weeklyTests = getWeeklyTests(userId);
+            const moduleBreakdown = getModuleBreakdown(userId);
+            const practiceHistory = getPracticeHistory(20, userId);
 
             // Calculate monthly goal progress
-            const allProgress = getAllProgressData();
+            const allProgress = getAllProgressData(userId);
             const totalTests = allProgress.reading.length + allProgress.writing.length + allProgress.listening.length;
             const monthlyGoal = 60;
             const achieved = totalTests;

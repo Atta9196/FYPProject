@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
+import { useAuth } from "../contexts/AuthContext";
+import { getStorageKeyForModule } from "../services/progressService";
 import {
     academicTask1Prompts,
     generalTask1Prompts,
@@ -10,7 +12,9 @@ import {
 } from "../data/writingPrompts";
 import { evaluateWritingSubmission } from "../services/api/writingService";
 
-const STORAGE_KEY = "ielts-writing-history";
+function getStorageKey(userId) {
+    return getStorageKeyForModule('writing', userId) || "ielts-writing-history";
+}
 
 const criteriaDescriptions = [
     {
@@ -54,12 +58,13 @@ const questionPools = {
     "task2-essay": task2EssayPrompts
 };
 
-function loadHistory() {
+function loadHistory(userId) {
     if (typeof window === "undefined") {
         return [];
     }
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const key = getStorageKey(userId);
+        const raw = window.localStorage.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
@@ -70,11 +75,12 @@ function loadHistory() {
     }
 }
 
-function saveHistory(entries) {
+function saveHistory(entries, userId) {
     if (typeof window === "undefined") {
         return;
     }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const key = getStorageKey(userId);
+    window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
 function countWords(value = "") {
@@ -92,6 +98,7 @@ function formatSeconds(totalSeconds) {
 }
 
 export function WritingPracticeView({ embedded = false }) {
+    const { user } = useAuth();
     const [activeTaskId, setActiveTaskId] = useState("task1-academic");
     const [currentPrompt, setCurrentPrompt] = useState(() => getRandomPrompt("task1-academic"));
     const [sessionStatus, setSessionStatus] = useState("idle"); // idle | running | time-up | completed
@@ -103,12 +110,22 @@ export function WritingPracticeView({ embedded = false }) {
     const [evaluation, setEvaluation] = useState(null);
     const [errorMessage, setErrorMessage] = useState(null);
     const [warnings, setWarnings] = useState([]);
-    const [history, setHistory] = useState(() => loadHistory());
+    const [history, setHistory] = useState(() => {
+        const userId = user?.email || user?.id || null;
+        return loadHistory(userId);
+    });
     const [pasteAttemptsBlocked, setPasteAttemptsBlocked] = useState(0);
 
     const config = writingTaskConfigs[activeTaskId];
 
     const wordCount = useMemo(() => countWords(responseText), [responseText]);
+
+    // Reload history when user changes
+    useEffect(() => {
+        const userId = user?.email || user?.id || null;
+        const userHistory = loadHistory(userId);
+        setHistory(userHistory);
+    }, [user]);
 
     useEffect(() => {
         if (sessionStatus !== "running") {
@@ -132,14 +149,15 @@ export function WritingPracticeView({ embedded = false }) {
     }, [sessionStatus, timeRemaining]);
 
     const persistHistoryEntry = useCallback((entry) => {
+        const userId = user?.email || user?.id || null;
         setHistory((prev) => {
             const next = [entry, ...prev].slice(0, historyLimit);
-            saveHistory(next);
+            saveHistory(next, userId);
             // Dispatch event to update dashboards in real-time
             window.dispatchEvent(new Event('progressUpdated'));
             return next;
         });
-    }, []);
+    }, [user]);
 
     const resetSession = useCallback(
         (taskId, promptOverride) => {

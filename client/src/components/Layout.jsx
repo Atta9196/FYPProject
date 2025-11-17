@@ -26,8 +26,15 @@ export function AppLayout({ children }) {
             </div>
             <div className="flex min-h-screen">
                 <aside className="hidden md:flex md:w-72 flex-col bg-white/70 backdrop-blur-xl border-r border-slate-200/70 shadow-sm">
-                    <div className="h-16 flex items-center px-6 border-b border-slate-200">
-                        <Link to="/" className="text-xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-sky-500">IELTS Coach</Link>
+                    <div className="h-16 flex items-center gap-3 px-6 border-b border-slate-200">
+                        <Link to="/" className="flex items-center gap-3">
+                            <img 
+                                src="/IeltsCoach logo.jpeg" 
+                                alt="IELTS Coach Logo" 
+                                className="h-10 w-auto"
+                            />
+                            <span className="text-xl font-extrabold text-purple-700">IELTSCoach</span>
+                        </Link>
                     </div>
                     <nav className="flex-1 p-4 space-y-1">
                         <Section label="Overview" />

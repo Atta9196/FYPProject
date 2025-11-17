@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
+import { useAuth } from "../contexts/AuthContext";
+import { getStorageKeyForModule } from "../services/progressService";
 import {
     getRandomReadingSet,
     readingBandTable,
     readingPassageSets
 } from "../data/readingPassages";
 
-const STORAGE_KEY = "ielts-reading-history";
 const TIMER_SECONDS = 60 * 60;
 const HIGHLIGHT_LIMIT = 20;
 
@@ -22,10 +23,15 @@ const questionTypeLabels = {
     "short-answer": "Short Answer"
 };
 
-function loadHistory() {
+function getStorageKey(userId) {
+    return getStorageKeyForModule('reading', userId) || "ielts-reading-history";
+}
+
+function loadHistory(userId) {
     if (typeof window === "undefined") return [];
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
+        const key = getStorageKey(userId);
+        const raw = window.localStorage.getItem(key);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
@@ -35,9 +41,10 @@ function loadHistory() {
     }
 }
 
-function saveHistory(entries) {
+function saveHistory(entries, userId) {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const key = getStorageKey(userId);
+    window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
 const normalizeAnswer = (value = "") =>
@@ -294,6 +301,7 @@ function HighlightList({ highlights, onUpdateNote, onRemove }) {
 }
 
 export function ReadingPracticeView({ embedded = false }) {
+    const { user } = useAuth();
     const [availableSets, setAvailableSets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
@@ -307,12 +315,22 @@ export function ReadingPracticeView({ embedded = false }) {
     const [submitting, setSubmitting] = useState(false);
     const [results, setResults] = useState(null);
     const [errorMessage, setErrorMessage] = useState(null);
-    const [history, setHistory] = useState(() => loadHistory());
+    const [history, setHistory] = useState(() => {
+        const userId = user?.email || user?.id || null;
+        return loadHistory(userId);
+    });
     const [highlights, setHighlights] = useState([]);
     const [highlightError, setHighlightError] = useState(null);
     const [showDetailedResults, setShowDetailedResults] = useState(true);
 
     const passageRef = useRef(null);
+
+    // Reload history when user changes
+    useEffect(() => {
+        const userId = user?.email || user?.id || null;
+        const userHistory = loadHistory(userId);
+        setHistory(userHistory);
+    }, [user]);
 
     // Load AI-generated reading test
     const loadAIGeneratedReading = useCallback(async () => {
@@ -447,14 +465,15 @@ export function ReadingPracticeView({ embedded = false }) {
     }, []);
 
     const persistHistory = useCallback((entry) => {
+        const userId = user?.email || user?.id || null;
         setHistory((prev) => {
             const next = [entry, ...prev].slice(0, 20);
-            saveHistory(next);
+            saveHistory(next, userId);
             // Dispatch event to update dashboards in real-time
             window.dispatchEvent(new Event('progressUpdated'));
             return next;
         });
-    }, []);
+    }, [user]);
 
     const handleSubmit = useCallback(
         (auto = false) => {
