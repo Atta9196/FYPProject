@@ -580,6 +580,36 @@ Randomization: choose topics from everyday life, technology, culture, education,
 
   const stop = async () => {
     try {
+      console.log('🛑 Stopping realtime agent - stopping all audio immediately...');
+      
+      // Stop remote audio immediately FIRST (before closing connections)
+      if (remoteAudioEl) {
+        try {
+          // Get stream before clearing it
+          const stream = remoteAudioEl.srcObject;
+          
+          // Pause and stop audio immediately
+          remoteAudioEl.pause();
+          remoteAudioEl.currentTime = 0;
+          
+          // Stop all tracks from the stream before clearing
+          if (stream && stream instanceof MediaStream) {
+            stream.getTracks().forEach(track => {
+              track.stop();
+              console.log('🛑 Stopped remote audio track:', track.id);
+            });
+          }
+          
+          // Clear audio element
+          remoteAudioEl.srcObject = null;
+          remoteAudioEl.src = '';
+          
+          console.log('🛑 Stopped remote audio element immediately');
+        } catch (e) {
+          console.warn('⚠️ Error stopping remote audio:', e);
+        }
+      }
+      
       // Clear all timers
       if (sessionTimer) {
         if (sessionTimer.timeout) clearTimeout(sessionTimer.timeout);
@@ -587,8 +617,33 @@ Randomization: choose topics from everyday life, technology, culture, education,
         sessionTimer = null;
       }
       
+      // Close data channel
+      if (dataChannel) {
+        try {
+          if (dataChannel.readyState === 'open') {
+            dataChannel.close();
+            console.log('🛑 Closed data channel');
+          }
+        } catch (e) {
+          console.warn('⚠️ Error closing data channel:', e);
+        }
+        dataChannel = null;
+      }
+      
       if (pc) {
-        // Stop all tracks
+        // Stop all receiver tracks (remote audio from AI)
+        pc.getReceivers().forEach((receiver) => {
+          try {
+            if (receiver.track) {
+              receiver.track.stop();
+              console.log('🛑 Stopped receiver track:', receiver.track.id);
+            }
+          } catch (e) {
+            console.warn('⚠️ Error stopping receiver track:', e);
+          }
+        });
+        
+        // Stop all sender tracks (microphone to AI)
         pc.getSenders().forEach((sender) => {
           try { 
             if (sender.track) {
@@ -614,15 +669,22 @@ Randomization: choose topics from everyday life, technology, culture, education,
     } finally {
       pc = null;
       micStream = null;
+      hasSentSessionInstructions = false;
+      
+      // Ensure audio element is completely stopped
       if (remoteAudioEl) {
         try { 
           remoteAudioEl.srcObject = null;
+          remoteAudioEl.src = '';
           remoteAudioEl.pause();
-          console.log('🛑 Stopped remote audio');
+          remoteAudioEl.currentTime = 0;
+          console.log('🛑 Final cleanup of remote audio element');
         } catch (e) {
-          console.warn('⚠️ Error stopping remote audio:', e);
+          console.warn('⚠️ Error in final audio cleanup:', e);
         }
       }
+      
+      console.log('✅ Realtime agent stopped - all audio stopped');
     }
   };
 
