@@ -18,7 +18,12 @@ import { MCQPracticeView } from "./pages/MCQPracticeView";
 import { PerformanceDashboardView } from "./pages/PerformanceDashboardView";
 import { ProfileView } from "./pages/ProfileView";
 import { SupportView } from "./pages/SupportView";
+<<<<<<< HEAD
 import { ChatbotView } from "./pages/ChatbotView";
+=======
+import { GameView } from "./pages/GameView";
+import { P4GameView } from "./pages/P4GameView";
+>>>>>>> 4ddc79df96433ce981e80560216822a20df5ff57
 import AboutIELTSCoachPage from "./pages/AboutPage";
 import ServicesPage from "./pages/ServicesPage";
 import ContactPage from "./pages/ContactPage";
@@ -139,10 +144,25 @@ function App() {
                   }
                 />
                 <Route
+<<<<<<< HEAD
                   path="/chatbot"
                   element={
                     <ProtectedRoute requireAuth={true}>
                       <ChatbotView />
+=======
+                  path="/game"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <GameView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/p4game"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <P4GameView />
+>>>>>>> 4ddc79df96433ce981e80560216822a20df5ff57
                     </ProtectedRoute>
                   }
                 />
