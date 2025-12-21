@@ -162,6 +162,10 @@ app.use("/api/reading", readingRoutes);
 const listeningRoutes = require("./routes/listeningRoutes");
 app.use("/api/listening", listeningRoutes);
 
+// Chatbot routes (Gemini API)
+const chatbotRoutes = require("./routes/chatbotRoutes");
+app.use("/api/chatbot", chatbotRoutes);
+
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
 const fs = require('fs');

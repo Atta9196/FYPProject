@@ -18,6 +18,7 @@ import { MCQPracticeView } from "./pages/MCQPracticeView";
 import { PerformanceDashboardView } from "./pages/PerformanceDashboardView";
 import { ProfileView } from "./pages/ProfileView";
 import { SupportView } from "./pages/SupportView";
+import { ChatbotView } from "./pages/ChatbotView";
 import AboutIELTSCoachPage from "./pages/AboutPage";
 import ServicesPage from "./pages/ServicesPage";
 import ContactPage from "./pages/ContactPage";
@@ -134,6 +135,14 @@ function App() {
                   element={
                     <ProtectedRoute requireAuth={true}>
                       <SupportView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/chatbot"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <ChatbotView />
                     </ProtectedRoute>
                   }
                 />

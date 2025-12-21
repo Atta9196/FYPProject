@@ -1346,6 +1346,38 @@ export function VoiceConversation({ onEndSession }) {
                         <span className="text-2xl">🎙️</span>
                         <span>Start Voice Conversation</span>
                     </button>
+                ) : useRealtime && sessionId === 'realtime' && realtimeAudioRef.current && realtimeAudioRef.current.paused ? (
+                    <div className="flex flex-col items-center space-y-4">
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
+                            <p className="text-yellow-800 text-sm font-medium mb-2">🔊 Audio Playback Blocked</p>
+                            <p className="text-yellow-700 text-xs mb-3">Your browser requires user interaction to start audio playback.</p>
+                            <button
+                                onClick={() => {
+                                    if (realtimeAudioRef.current) {
+                                        realtimeAudioRef.current.play()
+                                            .then(() => {
+                                                console.log('✅ Audio playback started after user click');
+                                                setIsPlaying(true);
+                                            })
+                                            .catch(e => {
+                                                console.error('❌ Failed to start audio:', e);
+                                                alert('Failed to start audio playback. Please check your browser settings.');
+                                            });
+                                    }
+                                }}
+                                className="px-4 py-2 bg-yellow-600 text-white rounded-lg font-semibold hover:bg-yellow-700 text-sm"
+                            >
+                                🔊 Click to Start Audio
+                            </button>
+                        </div>
+                        <button
+                            onClick={endVoiceSession}
+                            className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 flex items-center space-x-2"
+                        >
+                            <span className="text-xl">🏁</span>
+                            <span>End Session</span>
+                        </button>
+                    </div>
                 ) : (
                     <div className="flex flex-col items-center space-y-4">
                         <div className="text-center">

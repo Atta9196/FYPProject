@@ -1109,13 +1109,57 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
     const session = await response.json();
 
     console.log("✅ Realtime token created:", session.id);
+    console.log("📋 Session object keys:", Object.keys(session));
     console.log("🔑 client_secret exists:", !!session.client_secret);
+    console.log("🔑 client_secret type:", typeof session.client_secret);
     
-    res.json({
+    // Extract client_secret.value properly
+    let clientSecretValue = null;
+    
+    if (session.client_secret) {
+      if (typeof session.client_secret === 'string') {
+        // If it's already a string, use it directly
+        clientSecretValue = session.client_secret;
+        console.log("✅ client_secret is string:", clientSecretValue.substring(0, 20) + "...");
+      } else if (session.client_secret.value) {
+        // If it's an object with .value property
+        clientSecretValue = session.client_secret.value;
+        console.log("✅ client_secret.value found:", clientSecretValue.substring(0, 20) + "...");
+      } else {
+        console.warn("⚠️ client_secret exists but .value is missing");
+        console.log("🔑 client_secret object:", JSON.stringify(session.client_secret, null, 2));
+        // Try to stringify the whole object as fallback
+        clientSecretValue = JSON.stringify(session.client_secret);
+      }
+    } else {
+      console.warn("⚠️ client_secret not found in session object");
+      console.log("📋 Full session object (first 500 chars):", JSON.stringify(session, null, 2).substring(0, 500));
+    }
+    
+    if (!clientSecretValue) {
+      console.error("❌ CRITICAL: client_secret.value is missing from OpenAI response");
+      return res.status(500).json({
+        error: "Failed to extract client_secret from OpenAI session",
+        message: "OpenAI API did not return client_secret.value. Please check API key permissions.",
+        success: false
+      });
+    }
+    
+    // Ensure client_secret is properly structured in response
+    const responseData = {
       ...session,
+      // Ensure client_secret is always an object with .value property for consistency
+      client_secret: {
+        value: clientSecretValue
+      },
+      model: session.model || "gpt-4o-realtime-preview-2024-12-17", // Include model in response
       success: true,
       message: "Realtime token created successfully"
-    });
+    };
+    
+    console.log("✅ Response prepared with client_secret.value:", responseData.client_secret.value.substring(0, 20) + "...");
+    
+    res.json(responseData);
     
   } catch (error) {
     console.error("❌ Error creating Realtime token:", error);

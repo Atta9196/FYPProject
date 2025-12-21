@@ -709,139 +709,310 @@ export function SpeakingPracticeView({ embedded = false }) {
     // Real-time Mode
     if (selectedMode === 'realtime') {
         const realtimeModeContent = (
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
-                    {/* Header */}
+            <div className="space-y-4 md:space-y-6 lg:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
+                    {/* Header - Enhanced */}
                     {!embedded && (
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-3xl md:text-4xl font-extrabold text-green-700">Real-time Speaking Practice</h1>
-                                <p className="text-slate-600 mt-2">Have a natural conversation with an AI IELTS examiner</p>
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 md:w-12 md:h-12 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg">
+                                        <span className="text-xl md:text-2xl">💬</span>
+                                    </div>
+                                    <div>
+                                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                                            Real-time Speaking Practice
+                                        </h1>
+                                        <p className="text-sm md:text-base text-slate-600 mt-1">Have a natural conversation with an AI IELTS examiner</p>
+                                    </div>
+                                </div>
                             </div>
                             <button
                                 onClick={resetToModeSelection}
-                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                                className="px-4 py-2.5 text-sm font-medium rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow-md"
                             >
-                                ← Back to Modes
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                                </svg>
+                                <span className="hidden sm:inline">Back to Modes</span>
+                                <span className="sm:hidden">Back</span>
                             </button>
                         </div>
                     )}
 
-                    <div className="max-w-4xl mx-auto">
+                    <div className="max-w-5xl mx-auto">
                         {!isRealtimeActive ? (
-                            // Start Session Screen
-                            <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
-                                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                                    <span className="text-4xl">💬</span>
+                            // Start Session Screen - Enhanced
+                            <div className="bg-white/90 backdrop-blur-sm rounded-2xl md:rounded-3xl p-6 md:p-10 lg:p-12 shadow-xl border border-slate-200/50 text-center">
+                                <div className="w-24 h-24 md:w-28 md:h-28 bg-gradient-to-br from-green-100 to-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg animate-float">
+                                    <span className="text-5xl md:text-6xl">💬</span>
                                 </div>
-                                <h3 className="text-2xl font-bold text-slate-800 mb-4">
+                                <h3 className="text-2xl md:text-3xl font-bold text-slate-800 mb-4">
                                     Ready to Start Your Practice Session?
                                 </h3>
-                                <p className="text-slate-600 mb-8">
-                                    The AI examiner will ask you questions and provide feedback throughout the conversation.
+                                <p className="text-base md:text-lg text-slate-600 mb-8 max-w-2xl mx-auto leading-relaxed">
+                                    Have a natural conversation with an AI IELTS examiner. Practice Part 1 and Part 3 style questions with immediate feedback and guidance.
                                 </p>
+                                
+                                {/* Features List */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-3xl mx-auto">
+                                    <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200/50">
+                                        <div className="text-2xl mb-2">🎯</div>
+                                        <h4 className="font-semibold text-slate-800 text-sm mb-1">IELTS Focused</h4>
+                                        <p className="text-xs text-slate-600">Part 1 & 3 questions</p>
+                                    </div>
+                                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200/50">
+                                        <div className="text-2xl mb-2">⚡</div>
+                                        <h4 className="font-semibold text-slate-800 text-sm mb-1">Real-time</h4>
+                                        <p className="text-xs text-slate-600">Instant feedback</p>
+                                    </div>
+                                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-200/50">
+                                        <div className="text-2xl mb-2">📊</div>
+                                        <h4 className="font-semibold text-slate-800 text-sm mb-1">Detailed Summary</h4>
+                                        <p className="text-xs text-slate-600">Session feedback</p>
+                                    </div>
+                                </div>
+                                
                                 <button
                                     onClick={startRealtimeSession}
                                     disabled={isTyping}
-                                    className="px-8 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="px-8 md:px-10 py-4 md:py-5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl md:rounded-2xl font-bold text-base md:text-lg hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 flex items-center justify-center gap-3 mx-auto"
                                 >
-                                    {isTyping ? "Starting..." : "Start Conversation"}
+                                    {isTyping ? (
+                                        <>
+                                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            <span>Starting...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                            </svg>
+                                            <span>Start Conversation</span>
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         ) : (
-                            // Active Conversation
-                            <div className="space-y-6">
-                                {/* Conversation History */}
-                                <div className="bg-white rounded-2xl p-6 shadow-lg max-h-96 overflow-y-auto">
-                                    <h3 className="text-lg font-semibold text-slate-800 mb-4">Conversation</h3>
-                                    <div className="space-y-4">
+                            // Active Conversation - Beautiful & Responsive Design
+                            <div className="space-y-4 md:space-y-6">
+                                {/* Conversation History - Enhanced Design */}
+                                <div className="bg-white/90 backdrop-blur-sm rounded-2xl md:rounded-3xl shadow-xl border border-slate-200/50 overflow-hidden">
+                                    {/* Chat Header */}
+                                    <div className="bg-gradient-to-r from-green-500 to-emerald-500 px-4 md:px-6 py-4 border-b border-green-600/20">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 md:w-12 md:h-12 bg-white/20 backdrop-blur rounded-full flex items-center justify-center">
+                                                    <span className="text-xl md:text-2xl">🤖</span>
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-base md:text-lg font-bold text-white">AI IELTS Examiner</h3>
+                                                    <p className="text-xs md:text-sm text-green-100">Real-time conversation practice</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 bg-green-200 rounded-full animate-pulse"></div>
+                                                <span className="text-xs text-green-100 hidden sm:inline">Active</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Messages Container */}
+                                    <div className="h-[400px] md:h-[500px] lg:h-[600px] overflow-y-auto p-4 md:p-6 space-y-4 bg-gradient-to-b from-slate-50/50 to-white chat-container">
+                                        {conversationHistory.length === 0 && (
+                                            <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                                                <div className="w-16 h-16 md:w-20 md:h-20 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                                                    <span className="text-3xl md:text-4xl">💬</span>
+                                                </div>
+                                                <p className="text-slate-500 text-sm md:text-base">Start the conversation by typing your response below</p>
+                                            </div>
+                                        )}
+                                        
                                         {conversationHistory.map((message, index) => (
                                             <div
                                                 key={index}
-                                                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                                className={`flex items-start gap-3 message-enter ${
+                                                    message.role === 'user' ? 'flex-row-reverse' : 'flex-row'
+                                                }`}
+                                                style={{ animationDelay: `${index * 0.1}s` }}
                                             >
-                                                <div
-                                                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                                                        message.role === 'user'
-                                                            ? 'bg-blue-600 text-white'
-                                                            : 'bg-slate-100 text-slate-800'
-                                                    }`}
-                                                >
-                                                    <p className="text-sm">{message.content}</p>
-                                                    <p className="text-xs opacity-70 mt-1">
-                                                        {message.role === 'user' ? 'You' : 'AI Examiner'}
-                                                    </p>
+                                                {/* Avatar */}
+                                                <div className={`flex-shrink-0 w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center text-sm md:text-base font-semibold ${
+                                                    message.role === 'user'
+                                                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
+                                                        : 'bg-gradient-to-br from-green-500 to-emerald-500 text-white'
+                                                }`}>
+                                                    {message.role === 'user' ? '👤' : '🤖'}
+                                                </div>
+
+                                                {/* Message Bubble */}
+                                                <div className={`flex flex-col max-w-[75%] sm:max-w-[70%] md:max-w-[65%] lg:max-w-[60%] ${
+                                                    message.role === 'user' ? 'items-end' : 'items-start'
+                                                }`}>
+                                                    <div
+                                                        className={`relative px-4 py-3 md:px-5 md:py-4 rounded-2xl shadow-md transition-all duration-200 ${
+                                                            message.role === 'user'
+                                                                ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-tr-sm'
+                                                                : 'bg-white text-slate-800 border border-slate-200 rounded-tl-sm'
+                                                        }`}
+                                                    >
+                                                        <p className={`text-sm md:text-base leading-relaxed whitespace-pre-wrap break-words ${
+                                                            message.role === 'user' ? 'text-white' : 'text-slate-800'
+                                                        }`}>
+                                                            {message.content}
+                                                        </p>
+                                                        
+                                                        {/* Message Tail */}
+                                                        <div className={`absolute top-0 ${
+                                                            message.role === 'user' 
+                                                                ? 'right-0 translate-x-1' 
+                                                                : 'left-0 -translate-x-1'
+                                                        }`}>
+                                                            <div className={`w-3 h-3 transform rotate-45 ${
+                                                                message.role === 'user'
+                                                                    ? 'bg-blue-600'
+                                                                    : 'bg-white border-l border-t border-slate-200'
+                                                            }`}></div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Timestamp */}
+                                                    <span className={`text-xs text-slate-500 mt-1 px-2 ${
+                                                        message.role === 'user' ? 'text-right' : 'text-left'
+                                                    }`}>
+                                                        {message.timestamp 
+                                                            ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                                            : message.role === 'user' ? 'You' : 'AI Examiner'
+                                                        }
+                                                    </span>
                                                 </div>
                                             </div>
                                         ))}
+                                        
+                                        {/* Typing Indicator */}
                                         {isTyping && (
-                                            <div className="flex justify-start">
-                                                <div className="bg-slate-100 text-slate-800 px-4 py-2 rounded-lg">
-                                                    {streamingMessage ? (
-                                                        <div className="text-sm">
-                                                            {streamingMessage}
-                                                            <span className="inline-block w-2 h-4 bg-slate-600 ml-1 animate-pulse">|</span>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex space-x-1">
-                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                                            <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                                                        </div>
-                                                    )}
+                                            <div className="flex items-start gap-3 animate-fade-in">
+                                                <div className="flex-shrink-0 w-8 h-8 md:w-10 md:h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center">
+                                                    <span className="text-sm md:text-base">🤖</span>
+                                                </div>
+                                                <div className="flex flex-col items-start max-w-[75%] sm:max-w-[70%] md:max-w-[65%]">
+                                                    <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 md:px-5 md:py-4 shadow-md">
+                                                        {streamingMessage ? (
+                                                            <div className="text-sm md:text-base text-slate-800">
+                                                                {streamingMessage}
+                                                                <span className="inline-block w-0.5 h-4 md:h-5 bg-green-500 ml-1 animate-pulse">|</span>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce"></div>
+                                                                <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }}></div>
+                                                                <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }}></div>
+                                                                <span className="text-xs text-slate-500 ml-2">AI is typing...</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
+                                        
                                         <div ref={conversationEndRef} />
                                     </div>
                                 </div>
 
-                                {/* Message Input */}
+                                {/* Message Input - Enhanced Design */}
                                 {!sessionFeedback && (
-                                    <div className="bg-white rounded-2xl p-6 shadow-lg">
-                                        <div className="flex gap-4">
-                                            <input
-                                                type="text"
-                                                value={currentMessage}
-                                                onChange={(e) => setCurrentMessage(e.target.value)}
-                                                onKeyPress={(e) => e.key === 'Enter' && !isTyping && continueConversation(currentMessage)}
-                                                placeholder="Type your response here..."
-                                                className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                disabled={isTyping}
-                                            />
+                                    <div className="bg-white/90 backdrop-blur-sm rounded-2xl md:rounded-3xl shadow-xl border border-slate-200/50 p-4 md:p-6">
+                                        <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
+                                            <div className="flex-1 relative">
+                                                <input
+                                                    type="text"
+                                                    value={currentMessage}
+                                                    onChange={(e) => setCurrentMessage(e.target.value)}
+                                                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && !isTyping && currentMessage.trim() && continueConversation(currentMessage)}
+                                                    placeholder="Type your response here... (Press Enter to send)"
+                                                    className="w-full px-4 md:px-5 py-3 md:py-4 text-sm md:text-base border-2 border-slate-200 rounded-xl md:rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 disabled:bg-slate-50 disabled:cursor-not-allowed"
+                                                    disabled={isTyping}
+                                                />
+                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hidden sm:block">
+                                                    Enter to send
+                                                </div>
+                                            </div>
                                             <button
                                                 onClick={() => continueConversation(currentMessage)}
                                                 disabled={!currentMessage.trim() || isTyping}
-                                                className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                className="px-6 md:px-8 py-3 md:py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl md:rounded-2xl font-semibold hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 min-w-[100px] sm:min-w-[120px]"
                                             >
-                                                Send
+                                                {isTyping ? (
+                                                    <>
+                                                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                        <span className="hidden sm:inline">Sending...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                                        </svg>
+                                                        <span>Send</span>
+                                                    </>
+                                                )}
                                             </button>
+                                        </div>
+                                        <p className="text-xs text-slate-500 mt-2 text-center sm:text-left">
+                                            💡 Tip: Be natural and detailed in your responses for better practice
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Session Controls - Enhanced */}
+                                {!sessionFeedback && (
+                                    <div className="flex flex-col sm:flex-row justify-center items-center gap-3 md:gap-4">
+                                        <button
+                                            onClick={endRealtimeSession}
+                                            disabled={isTyping}
+                                            className="w-full sm:w-auto px-6 md:px-8 py-3 md:py-4 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl md:rounded-2xl font-semibold hover:from-red-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                            <span>End Session</span>
+                                        </button>
+                                        
+                                        {/* Session Stats */}
+                                        <div className="flex items-center gap-4 text-sm text-slate-600 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-xl border border-slate-200">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-green-500">●</span>
+                                                <span>{conversationHistory.filter(m => m.role === 'user').length} messages</span>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
 
-                                {/* Session Controls */}
-                                <div className="flex justify-center gap-4">
-                                    {!sessionFeedback && (
-                                        <button
-                                            onClick={endRealtimeSession}
-                                            disabled={isTyping}
-                                            className="px-6 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            End Session
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Session Feedback */}
+                                {/* Session Feedback - Enhanced */}
                                 {sessionFeedback && (
-                                    <div className="bg-gradient-to-br from-green-50 to-blue-50 rounded-xl border border-slate-200 p-6 shadow-sm">
-                                        <div className="flex items-start gap-3">
-                                            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-                                                <span className="text-green-600 text-lg">📊</span>
+                                    <div className="bg-gradient-to-br from-green-50 via-emerald-50 to-blue-50 rounded-2xl md:rounded-3xl border-2 border-green-200/50 p-6 md:p-8 shadow-xl">
+                                        <div className="flex flex-col sm:flex-row items-start gap-4 md:gap-6">
+                                            <div className="flex-shrink-0 w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center shadow-lg">
+                                                <span className="text-3xl md:text-4xl">📊</span>
                                             </div>
                                             <div className="flex-1">
-                                                <h4 className="text-lg font-semibold text-slate-800 mb-3">Session Summary</h4>
-                                                <p className="text-slate-700 leading-relaxed">{sessionFeedback}</p>
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <h4 className="text-xl md:text-2xl font-bold text-slate-800">Session Summary</h4>
+                                                    <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">Complete</span>
+                                                </div>
+                                                <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 md:p-6 border border-green-200/50">
+                                                    <p className="text-slate-700 leading-relaxed text-sm md:text-base whitespace-pre-wrap">{sessionFeedback}</p>
+                                                </div>
+                                                <button
+                                                    onClick={resetToModeSelection}
+                                                    className="mt-4 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-semibold hover:from-green-600 hover:to-emerald-600 transition-all duration-200 shadow-lg hover:shadow-xl"
+                                                >
+                                                    Start New Session
+                                                </button>
                                             </div>
                                         </div>
                                     </div>

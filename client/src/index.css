@@ -42,6 +42,64 @@
   50% { transform: translateY(-10px); }
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Smooth scrolling for chat */
+.chat-container {
+  scroll-behavior: smooth;
+}
+
+.chat-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
 html {
   scroll-behavior: smooth;
+}
+
+/* Message animation */
+@keyframes slideInMessage {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-enter {
+  animation: slideInMessage 0.3s ease-out;
+}
+
+/* Float animation for empty state icon */
+@keyframes float {
+  0%, 100% { 
+    transform: translateY(0px); 
+  }
+  50% { 
+    transform: translateY(-10px); 
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
 }

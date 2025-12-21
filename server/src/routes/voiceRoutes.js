@@ -26,6 +26,8 @@ router.post("/session", async (req, res) => {
 
     // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
     // Using latest model for better real-time voice responses
+    console.log("🔑 API Key prefix:", process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 10) + "..." : "not set");
+    
     const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -33,7 +35,7 @@ router.post("/session", async (req, res) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for better performance
+        model: "gpt-4o-mini-realtime-preview-2024-12-17", // Try mini model if full model not available
         voice: "verse", // "verse" for natural voice, or "alloy", "ash", "ballad", "coral", "echo", "sage"
         modalities: ["text", "audio"], // Enable both text and audio for real-time voice
         instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
@@ -130,15 +132,45 @@ FINAL REMINDER:
           type: 'server_vad',
           threshold: 0.5, // Higher threshold for better voice detection
           prefix_padding_ms: 300, // Capture context before user speaks
-          silence_duration_ms: 800 // Shorter silence for faster turn-taking (more natural conversation)
+          silence_duration_ms: 4000 // Increased to 4 seconds to wait for user to finish speaking completely
         },
         temperature: 0.7 // Slightly lower for more focused, context-aware responses
       })
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
+      const errorText = await response.text().catch(() => "Unknown error");
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        errorData = { error: errorText };
+      }
+      
+      console.error("❌ OpenAI Realtime API Error:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData.error || errorData,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+      
+      // Provide more helpful error messages
+      let errorMessage = `OpenAI API error: ${response.status}`;
+      if (response.status === 401) {
+        errorMessage += " - Authentication failed. Please check:\n";
+        errorMessage += "1. Your API key is valid and has Realtime API access\n";
+        errorMessage += "2. Your API key has 'All' permissions or Realtime API write access\n";
+        errorMessage += "3. The API key is correctly set in your .env file\n";
+        errorMessage += "4. You may need to request Realtime API access if it's not enabled";
+      } else if (response.status === 403) {
+        errorMessage += " - Access forbidden. Your API key may not have Realtime API permissions.";
+      } else if (response.status === 404) {
+        errorMessage += " - Model not found. The Realtime API model may not be available for your account.";
+      } else {
+        errorMessage += ` - ${errorData.error?.message || errorData.error || errorText}`;
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const session = await response.json();
@@ -148,26 +180,51 @@ FINAL REMINDER:
     console.log("🔑 client_secret exists:", !!session.client_secret);
     console.log("🔑 client_secret type:", typeof session.client_secret);
     
-    // Log client_secret.value specifically
+    // Extract client_secret.value properly
+    let clientSecretValue = null;
+    
     if (session.client_secret) {
-      if (session.client_secret.value) {
-        console.log("✅ client_secret.value found:", session.client_secret.value.substring(0, 20) + "...");
+      if (typeof session.client_secret === 'string') {
+        // If it's already a string, use it directly
+        clientSecretValue = session.client_secret;
+        console.log("✅ client_secret is string:", clientSecretValue.substring(0, 20) + "...");
+      } else if (session.client_secret.value) {
+        // If it's an object with .value property
+        clientSecretValue = session.client_secret.value;
+        console.log("✅ client_secret.value found:", clientSecretValue.substring(0, 20) + "...");
       } else {
         console.warn("⚠️ client_secret exists but .value is missing");
         console.log("🔑 client_secret object:", JSON.stringify(session.client_secret, null, 2));
+        // Try to stringify the whole object as fallback
+        clientSecretValue = JSON.stringify(session.client_secret);
       }
     } else {
       console.warn("⚠️ client_secret not found in session object");
-      console.log("📋 Full session object:", JSON.stringify(session, null, 2));
+      console.log("📋 Full session object (first 500 chars):", JSON.stringify(session, null, 2).substring(0, 500));
     }
     
-    // Ensure client_secret is included in response and add model
+    if (!clientSecretValue) {
+      console.error("❌ CRITICAL: client_secret.value is missing from OpenAI response");
+      return res.status(500).json({
+        error: "Failed to extract client_secret from OpenAI session",
+        message: "OpenAI API did not return client_secret.value. Please check API key permissions.",
+        success: false
+      });
+    }
+    
+    // Ensure client_secret is properly structured in response
     const responseData = {
       ...session,
+      // Ensure client_secret is always an object with .value property for consistency
+      client_secret: {
+        value: clientSecretValue
+      },
       model: session.model || "gpt-4o-realtime-preview-2024-12-17", // Include model in response
       success: true,
       message: "Session created successfully"
     };
+    
+    console.log("✅ Response prepared with client_secret.value:", responseData.client_secret.value.substring(0, 20) + "...");
     
     res.json(responseData);
     
