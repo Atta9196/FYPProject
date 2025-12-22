@@ -7,7 +7,16 @@ const socketIo = require("socket.io");
 
 // ✅ Load .env immediately at startup (absolute path to server/.env)
 const envPath = path.join(__dirname, "..", ".env");
-dotenv.config({ path: envPath });
+console.log('📁 Loading .env from:', envPath);
+console.log('📁 __dirname:', __dirname);
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  console.error('❌ Error loading .env file:', result.error);
+} else {
+  console.log('✅ .env file loaded successfully');
+  console.log('🔑 GEMINI_API_KEY loaded:', Boolean(process.env.GEMINI_API_KEY));
+  console.log('🔑 GOOGLE_API_KEY loaded:', Boolean(process.env.GOOGLE_API_KEY));
+}
 
 const app = express();
 const server = http.createServer(app);

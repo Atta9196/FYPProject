@@ -12,7 +12,8 @@ import {
     TabsIcon,
     UserIcon,
     HelpIcon,
-    MenuIcon
+    MenuIcon,
+    ChatbotIcon
 } from './ui/icons';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -49,6 +50,8 @@ export function AppLayout({ children }) {
                         <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" />
                         <SideLink to="/game" icon={TabsIcon} label="Mini Games" />
                         <SideLink to="/p4game" icon={TabsIcon} label="4ps Game" />
+                        <Section label="Support" />
+                        <SideLink to="/chatbot" icon={ChatbotIcon} label="IELTS Assistant" />
                         <Section label="Account" />
                         <SideLink to="/profile" icon={UserIcon} label="Profile" />
                         <SideLink to="/support" icon={HelpIcon} label="Support" />

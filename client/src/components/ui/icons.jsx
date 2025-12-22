@@ -45,6 +45,15 @@ export function PenIcon({ className }) { return (
         <path d="M12 20h9" />
         <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z" />
     </svg>
-);} 
+);}
+
+export function ChatbotIcon({ className }) { return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        <path d="M8 10h.01" />
+        <path d="M12 10h.01" />
+        <path d="M16 10h.01" />
+    </svg>
+);}
 
 

@@ -37,9 +37,9 @@ router.post('/message', async (req, res) => {
     // Build conversation context with system prompt
     const systemPrompt = buildConversationContext(message, chatHistory);
 
-    // Call Gemini API
-    const modelName = 'gemini-2.0-flash-exp';
-    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${apiKey}`;
+    // Call Gemini API - Using gemini-2.5-flash (tested and working)
+    const modelName = 'gemini-2.5-flash';
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
     const requestBody = {
       contents: [{
@@ -55,47 +55,54 @@ router.post('/message', async (req, res) => {
       }
     };
 
-    console.log('📤 Sending message to Gemini API via server...');
+    console.log(`📤 Sending message to Gemini API (${modelName})...`);
     
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody)
-    });
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Gemini API Error:', errorText);
-      
-      let errorMessage = `API request failed: ${response.status}`;
-      if (response.status === 403) {
-        errorMessage = 'API key issue detected. Please check your API key configuration.';
-      } else if (response.status === 429) {
-        errorMessage = 'API quota exceeded. Please wait a moment and try again.';
-      } else if (response.status === 404) {
-        errorMessage = `Model '${modelName}' not found. Trying fallback model...`;
-        // Try fallback model
-        return tryFallbackModel(apiKey, systemPrompt, res);
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+          return res.status(500).json({ error: 'Invalid API response format' });
+        }
+
+        const botResponse = data.candidates[0].content.parts[0].text;
+        console.log(`✅ Gemini API response received (${modelName})`);
+
+        return res.json({ 
+          response: botResponse,
+          model: modelName
+        });
+      } else {
+        const errorText = await response.text();
+        console.error(`❌ Gemini API Error: ${response.status}`);
+        console.error(`   Error: ${errorText.substring(0, 200)}`);
+        
+        let errorMessage = `API request failed: ${response.status}`;
+        if (response.status === 403) {
+          errorMessage = 'API key issue detected. Please check your API key configuration.';
+        } else if (response.status === 429) {
+          errorMessage = 'API quota exceeded. Please wait a moment and try again.';
+        } else if (response.status === 404) {
+          errorMessage = `Model '${modelName}' not found. Please check the model name.`;
+        }
+        
+        return res.status(response.status).json({ error: errorMessage });
       }
-      
-      return res.status(response.status).json({ error: errorMessage });
+    } catch (error) {
+      console.error('❌ Chatbot route error:', error);
+      return res.status(500).json({ 
+        error: 'Internal server error',
+        message: error.message 
+      });
     }
-
-    const data = await response.json();
-    
-    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-      return res.status(500).json({ error: 'Invalid API response format' });
-    }
-
-    const botResponse = data.candidates[0].content.parts[0].text;
-    console.log('✅ Gemini API response received');
-
-    res.json({ 
-      response: botResponse,
-      model: modelName
-    });
   } catch (error) {
     console.error('❌ Chatbot route error:', error);
     res.status(500).json({ 

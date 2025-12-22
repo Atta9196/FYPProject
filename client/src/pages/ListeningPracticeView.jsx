@@ -256,26 +256,125 @@ export function ListeningPracticeView({ embedded = false }) {
     );
 
     const handlePlayAudio = useCallback(
-        (sectionId) => {
+        async (sectionId) => {
             const audioElement = audioRefs.current[sectionId];
             const section = listeningSections.find((item) => item.id === sectionId);
-            if (!audioElement || !section) return;
+            
+            if (!audioElement) {
+                console.error('❌ Audio element not found for section:', sectionId);
+                setErrorMessage('Audio player not initialized. Please refresh the page.');
+                return;
+            }
+            
+            if (!section) {
+                console.error('❌ Section not found:', sectionId);
+                return;
+            }
+            
+            if (!section.audioUrl) {
+                console.error('❌ Audio URL not found for section:', sectionId);
+                setErrorMessage('Audio file not available. Please generate a new test.');
+                return;
+            }
 
-            updateSectionState(sectionId, (current) => {
-                if (current.audioStarted) return current;
-                return {
-                    ...defaultSectionState(section),
-                    phase: "playing",
-                    audioStarted: true
+            // Verify audio URL is accessible
+            try {
+                const response = await fetch(section.audioUrl, { method: 'HEAD', mode: 'no-cors' });
+                console.log('✅ Audio URL check completed:', section.audioUrl);
+            } catch (urlError) {
+                console.warn('⚠️ Could not verify audio URL (may be CORS restricted):', urlError);
+                // Continue anyway - some URLs work even if HEAD fails
+            }
+
+            // Check if audio already started
+            const currentState = sectionStates[sectionId];
+            if (currentState?.audioStarted) {
+                console.warn('⚠️ Audio already started for this section');
+                return;
+            }
+
+            try {
+                // Set audio source if not already set
+                if (audioElement.src !== section.audioUrl) {
+                    audioElement.src = section.audioUrl;
+                }
+
+                // Update state before playing
+                updateSectionState(sectionId, (current) => {
+                    if (current.audioStarted) return current;
+                    return {
+                        ...defaultSectionState(section),
+                        phase: "playing",
+                        audioStarted: true
+                    };
+                });
+
+                // Reset and play
+                audioElement.currentTime = 0;
+                
+                // Add error handlers
+                const handleError = (e) => {
+                    console.error('❌ Audio playback error:', e);
+                    const errorMsg = audioElement.error 
+                        ? `Audio error: ${audioElement.error.code} - ${audioElement.error.message}`
+                        : 'Failed to play audio. The audio file may be unavailable or blocked.';
+                    setErrorMessage(errorMsg);
+                    
+                    // Reset state on error
+                    updateSectionState(sectionId, () => ({
+                        ...defaultSectionState(section),
+                        phase: "idle",
+                        audioStarted: false
+                    }));
                 };
-            });
 
-            audioElement.currentTime = 0;
-            audioElement.play().catch(() => {
-                // Autoplay policies may block playback; keep state unchanged
-            });
+                const handleLoadError = () => {
+                    console.error('❌ Audio load error');
+                    setErrorMessage('Failed to load audio file. Please check your internet connection or generate a new test.');
+                    updateSectionState(sectionId, () => ({
+                        ...defaultSectionState(section),
+                        phase: "idle",
+                        audioStarted: false
+                    }));
+                };
+
+                // Remove old listeners
+                audioElement.removeEventListener('error', handleError);
+                audioElement.removeEventListener('error', handleLoadError);
+                
+                // Add new listeners
+                audioElement.addEventListener('error', handleError);
+                audioElement.addEventListener('error', handleLoadError);
+
+                // Try to play
+                await audioElement.play();
+                console.log('✅ Audio playback started');
+                
+            } catch (error) {
+                console.error('❌ Error playing audio:', error);
+                let errorMsg = 'Failed to play audio. ';
+                
+                if (error.name === 'NotAllowedError') {
+                    errorMsg += 'Browser blocked autoplay. Please click the play button again.';
+                } else if (error.name === 'NotSupportedError') {
+                    errorMsg += 'Audio format not supported by your browser.';
+                } else if (error.name === 'NetworkError') {
+                    errorMsg += 'Network error loading audio file.';
+                } else {
+                    errorMsg += error.message || 'Unknown error occurred.';
+                }
+                
+                setErrorMessage(errorMsg);
+                
+                // Reset state on error
+                updateSectionState(sectionId, () => ({
+                    ...defaultSectionState(section),
+                    phase: "idle",
+                    audioStarted: false
+                }));
+            }
         },
-        [updateSectionState]
+        [updateSectionState, listeningSections, sectionStates]
     );
 
     const handleAnswerChange = useCallback((sectionId, questionId, value) => {
@@ -583,21 +682,39 @@ export function ListeningPracticeView({ embedded = false }) {
                         </div>
 
                         <div className="space-y-4">
+                            {errorMessage && (
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                    <p className="font-semibold">⚠️ Audio Error</p>
+                                    <p>{errorMessage}</p>
+                                    <button
+                                        onClick={() => setErrorMessage(null)}
+                                        className="mt-2 text-xs underline hover:no-underline"
+                                    >
+                                        Dismiss
+                                    </button>
+                                </div>
+                            )}
                             <div className="flex items-center gap-3">
                                 <button
                                     type="button"
                                     onClick={() => handlePlayAudio(activeSection.id)}
-                                    disabled={activeState.audioStarted}
+                                    disabled={activeState.audioStarted || !activeSection.audioUrl}
                                     className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors ${
-                                        activeState.audioStarted
+                                        activeState.audioStarted || !activeSection.audioUrl
                                             ? "bg-slate-200 text-slate-500 cursor-not-allowed"
                                             : "bg-sky-600 text-white hover:bg-sky-700"
                                     }`}
                                 >
-                                    {activeState.audioStarted ? "Audio Locked" : "Play Audio (once)"}
+                                    {activeState.audioStarted 
+                                        ? "Audio Locked" 
+                                        : !activeSection.audioUrl
+                                        ? "No Audio Available"
+                                        : "Play Audio (once)"}
                                 </button>
                                 <span className="text-xs text-slate-500">
-                                    Audio can only be played once. It locks after playback ends.
+                                    {activeSection.audioUrl 
+                                        ? "Audio can only be played once. It locks after playback ends."
+                                        : "Audio file not available. Please generate a new test."}
                                 </span>
                             </div>
 
@@ -605,12 +722,33 @@ export function ListeningPracticeView({ embedded = false }) {
                                 ref={(element) => {
                                     if (element) {
                                         audioRefs.current[activeSection.id] = element;
+                                        // Set source when element is ready
+                                        if (activeSection.audioUrl && element.src !== activeSection.audioUrl) {
+                                            element.src = activeSection.audioUrl;
+                                        }
                                     }
                                 }}
                                 src={activeSection.audioUrl}
-                                preload="auto"
+                                preload="metadata"
+                                crossOrigin="anonymous"
                                 className="hidden"
                                 onEnded={() => handleAudioEnded(activeSection.id)}
+                                onLoadedMetadata={() => {
+                                    console.log('✅ Audio metadata loaded for section:', activeSection.id);
+                                }}
+                                onCanPlay={() => {
+                                    console.log('✅ Audio can play for section:', activeSection.id);
+                                }}
+                                onError={(e) => {
+                                    console.error('❌ Audio element error:', e);
+                                    const audioEl = audioRefs.current[activeSection.id];
+                                    if (audioEl?.error) {
+                                        console.error('Audio error details:', {
+                                            code: audioEl.error.code,
+                                            message: audioEl.error.message
+                                        });
+                                    }
+                                }}
                             />
 
                             <TimerBar

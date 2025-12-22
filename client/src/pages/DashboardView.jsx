@@ -293,7 +293,7 @@ export function DashboardView() {
                         {/* Quick Actions */}
                         <div className="lg:col-span-2 space-y-6">
                             <h2 className="text-2xl font-bold text-slate-800 mb-6">Quick Actions</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                                 <Link to="/speaking" className="group">
                                     <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200 shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-105">
                                         <div className="text-center">
@@ -328,6 +328,19 @@ export function DashboardView() {
                                             <p className="text-sm text-slate-600 mb-4">Multiple choice questions</p>
                                             <div className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium group-hover:bg-purple-700 transition-colors">
                                                 Practice MCQs
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Link>
+
+                                <Link to="/chatbot" className="group">
+                                    <div className="bg-gradient-to-br from-pink-50 to-rose-50 rounded-2xl p-6 border border-pink-200 shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-105">
+                                        <div className="text-center">
+                                            <div className="text-4xl mb-4">🤖</div>
+                                            <h3 className="text-lg font-semibold text-slate-800 mb-2">IELTS Assistant</h3>
+                                            <p className="text-sm text-slate-600 mb-4">AI-powered chatbot help</p>
+                                            <div className="inline-flex items-center px-4 py-2 bg-pink-600 text-white rounded-lg text-sm font-medium group-hover:bg-pink-700 transition-colors">
+                                                Chat Now
                                             </div>
                                         </div>
                                     </div>
