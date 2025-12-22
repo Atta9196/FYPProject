@@ -19,11 +19,26 @@ export function Footer() {
 }
 
 export function ProtectedRoute({ requireAuth, children }) {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (requireAuth && !user) return React.createElement(Navigate, { to: '/login', replace: true });
-  if (requireAuth === false && user) return React.createElement(Navigate, { to: '/dashboard', replace: true });
-  return children;
+  try {
+    const { user, loading } = useAuth();
+    if (loading) {
+      return React.createElement('div', { 
+        className: 'flex items-center justify-center min-h-screen' 
+      }, React.createElement('div', { className: 'text-center' }, 'Loading...'));
+    }
+    if (requireAuth && !user) {
+      return React.createElement(Navigate, { to: '/login', replace: true });
+    }
+    if (requireAuth === false && user) {
+      return React.createElement(Navigate, { to: '/dashboard', replace: true });
+    }
+    return children;
+  } catch (error) {
+    console.error('ProtectedRoute Error:', error);
+    return React.createElement('div', { 
+      className: 'p-4 text-red-600' 
+    }, `Error: ${error.message}`);
+  }
 }
 
 

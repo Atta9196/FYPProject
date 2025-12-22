@@ -1,5 +1,6 @@
 // Gemini Service for Web - Similar to mobile app
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+// Vite uses import.meta.env instead of process.env
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 export class GeminiService {
   constructor() {
