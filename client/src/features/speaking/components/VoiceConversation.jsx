@@ -1106,26 +1106,91 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const endVoiceSession = () => {
+        console.log('🛑 Ending voice session - stopping all audio...');
+        
+        // Stop all audio playback immediately
+        // Stop regular audio element
+        if (audioRef.current) {
+            try {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+                audioRef.current.src = '';
+                audioRef.current.srcObject = null;
+                console.log('🛑 Stopped audioRef audio');
+            } catch (e) {
+                console.warn('⚠️ Error stopping audioRef:', e);
+            }
+        }
+        
+        // Stop realtime audio element
+        if (realtimeAudioRef.current) {
+            try {
+                realtimeAudioRef.current.pause();
+                realtimeAudioRef.current.currentTime = 0;
+                realtimeAudioRef.current.src = '';
+                realtimeAudioRef.current.srcObject = null;
+                console.log('🛑 Stopped realtimeAudioRef audio');
+            } catch (e) {
+                console.warn('⚠️ Error stopping realtimeAudioRef:', e);
+            }
+        }
+        
+        // Stop speech synthesis immediately
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+            try {
+                window.speechSynthesis.cancel();
+                console.log('🛑 Stopped speech synthesis');
+            } catch (e) {
+                console.warn('⚠️ Error stopping speech synthesis:', e);
+            }
+        }
+        
+        // Stop realtime agent
         if (useRealtime && realtimeRef.current) {
             realtimeRef.current.stop().catch(() => {});
         }
+        
         // Stop voice activity detection
         if (voiceDetectionRef.current) {
             cancelAnimationFrame(voiceDetectionRef.current);
+            voiceDetectionRef.current = null;
         }
         
         // Stop streaming interval
         if (streamingIntervalRef.current) {
             clearInterval(streamingIntervalRef.current);
+            streamingIntervalRef.current = null;
         }
         
         // Close audio context
         if (audioContextRef.current) {
-            audioContextRef.current.close();
+            try {
+                audioContextRef.current.close();
+                console.log('🛑 Closed audio context');
+            } catch (e) {
+                console.warn('⚠️ Error closing audio context:', e);
+            }
         }
         
+        // Stop media recorder if active
+        if (mediaRecorderRef.current) {
+            try {
+                if (mediaRecorderRef.current.state === 'recording') {
+                    mediaRecorderRef.current.stop();
+                }
+                mediaRecorderRef.current = null;
+                console.log('🛑 Stopped media recorder');
+            } catch (e) {
+                console.warn('⚠️ Error stopping media recorder:', e);
+            }
+        }
+        
+        // Stop all stream tracks
         if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current.getTracks().forEach(track => {
+                track.stop();
+                console.log('🛑 Stopped stream track:', track.id);
+            });
         }
         
         // Only notify server if not in Realtime mode
@@ -1133,11 +1198,14 @@ export function VoiceConversation({ onEndSession }) {
             socketRef.current.emit('voice-conversation', { type: 'end', sessionId });
         }
         
+        // Update UI state
         setIsRecording(false);
         setIsListening(false);
         setIsProcessing(false);
-        // Always keep streaming mode enabled
+        setIsPlaying(false);
         setVoiceActivity(false);
+        
+        console.log('✅ Voice session ended - all audio stopped');
     };
 
     return (
