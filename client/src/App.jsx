@@ -16,6 +16,7 @@ import { WritingPracticeView } from "./pages/WritingPracticeView";
 import { FullTestSimulatorView } from "./pages/FullTestSimulatorView";
 import { MCQPracticeView } from "./pages/MCQPracticeView";
 import { PerformanceDashboardView } from "./pages/PerformanceDashboardView";
+import { ChatbotView } from "./pages/ChatbotView";
 import { ProfileView } from "./pages/ProfileView";
 import { SupportView } from "./pages/SupportView";
 import { GameView } from "./pages/GameView";
@@ -136,6 +137,14 @@ function App() {
                   element={
                     <ProtectedRoute requireAuth={true}>
                       <SupportView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/chatbot"
+                  element={
+                    <ProtectedRoute requireAuth={true}>
+                      <ChatbotView />
                     </ProtectedRoute>
                   }
                 />

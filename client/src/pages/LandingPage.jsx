@@ -241,6 +241,27 @@ export default function LandingPage() {
       <footer className="bg-slate-900 text-slate-300 text-center py-8 text-lg">
         © {new Date().getFullYear()} IELTS Coach | Developed by <span className="text-purple-400 font-semibold">Software Engineering Students</span>
       </footer>
+
+      {/* Floating Chatbot Button - same style as dashboard */}
+      <Link
+        to="/chatbot"
+        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 z-40 inline-flex items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300 transition-all w-12 h-12 md:w-14 md:h-14"
+        aria-label="Open IELTS Chatbot"
+      >
+        <svg
+          className="w-6 h-6 md:w-7 md:h-7"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M4 6.5C4 5.12 5.12 4 6.5 4h11A2.5 2.5 0 0 1 20 6.5v6A2.5 2.5 0 0 1 17.5 15H12l-3.5 3.5V15H6.5A2.5 2.5 0 0 1 4 12.5v-6Z" />
+          <path d="M9 9h6" />
+          <path d="M9 11.5h3.5" />
+        </svg>
+      </Link>
     </div>
   );
 }

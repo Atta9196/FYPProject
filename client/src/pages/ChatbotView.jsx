@@ -200,22 +200,11 @@ export function ChatbotView() {
 
                 {/* Main Content */}
                 <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-                    {/* Branding */}
+                    {/* Simple branding, no API status text */}
                     <div className="text-center mb-6">
-                        <h2 className="text-3xl sm:text-4xl font-extrabold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-4">
+                        <h2 className="text-3xl sm:text-4xl font-extrabold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
                             IELTSCoach
                         </h2>
-                        
-                        {/* API Key Status */}
-                        <div className="flex items-center justify-center gap-3 mb-4">
-                            <div className={`w-3 h-3 rounded-full ${getApiKeyStatusColor()} ${apiKeyStatus === 'configured' ? 'animate-pulse' : ''}`}></div>
-                            <span className="text-sm font-semibold text-slate-700">{getApiKeyStatusText()}</span>
-                            {apiKeyStatus === 'configured' && (
-                                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                            )}
-                        </div>
                     </div>
 
                     {/* Chat Container */}
@@ -371,7 +360,7 @@ export function ChatbotView() {
                                         onKeyPress={handleKeyPress}
                                         placeholder="Type your message..."
                                         className="w-full px-4 sm:px-5 py-3 sm:py-4 text-sm sm:text-base border-2 border-slate-200 rounded-xl sm:rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:bg-slate-50 disabled:cursor-not-allowed"
-                                        disabled={isLoading || apiKeyStatus !== 'configured'}
+                                        disabled={isLoading}
                                     />
                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hidden sm:block">
                                         Enter to send
@@ -379,7 +368,7 @@ export function ChatbotView() {
                                 </div>
                                 <button
                                     onClick={handleSendMessage}
-                                    disabled={!inputText.trim() || isLoading || apiKeyStatus !== 'configured'}
+                                    disabled={!inputText.trim() || isLoading}
                                     className="px-6 sm:px-8 py-3 sm:py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl sm:rounded-2xl font-semibold hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 min-w-[100px] sm:min-w-[120px]"
                                 >
                                     {isLoading ? (
@@ -400,11 +389,6 @@ export function ChatbotView() {
                                     )}
                                 </button>
                             </div>
-                            {apiKeyStatus !== 'configured' && (
-                                <p className="text-xs text-red-600 mt-2 text-center sm:text-left">
-                                    ⚠️ API key not configured. Please configure your GEMINI_API_KEY in server/.env file to use the chatbot.
-                                </p>
-                            )}
                         </div>
                     </div>
                 </div>

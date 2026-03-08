@@ -18,7 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 export function AppLayout({ children }) {
     return (
-        <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50 text-gray-900">
+        <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50 text-gray-900 relative">
             {/* Decorative gradient blobs */}
             <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
                 <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-blue-200/40 blur-3xl" />
@@ -58,8 +58,29 @@ export function AppLayout({ children }) {
                 </aside>
                 <div className="flex-1 flex flex-col">
                     <Topbar />
-                    <main className="flex-1 p-4 md:p-6 lg:p-8">
+                    <main className="flex-1 p-4 md:p-6 lg:p-8 relative">
                         {children}
+                        {/* Floating Chatbot Button */}
+                        <Link
+                            to="/chatbot"
+                            className="fixed bottom-6 right-6 md:bottom-8 md:right-8 z-40 inline-flex items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300 transition-all w-12 h-12 md:w-14 md:h-14"
+                            aria-label="Open IELTS Chatbot"
+                        >
+                            {/* Chat icon similar to Fiverr style */}
+                            <svg
+                                className="w-6 h-6 md:w-7 md:h-7"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            >
+                                <path d="M4 6.5C4 5.12 5.12 4 6.5 4h11A2.5 2.5 0 0 1 20 6.5v6A2.5 2.5 0 0 1 17.5 15H12l-3.5 3.5V15H6.5A2.5 2.5 0 0 1 4 12.5v-6Z" />
+                                <path d="M9 9h6" />
+                                <path d="M9 11.5h3.5" />
+                            </svg>
+                        </Link>
                     </main>
                 </div>
             </div>
