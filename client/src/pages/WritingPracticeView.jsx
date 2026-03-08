@@ -288,11 +288,6 @@ export function WritingPracticeView({ embedded = false }) {
         }
     }, [sessionStatus, submitted, submitting, handleSubmit]);
 
-    const handlePreventPaste = useCallback((event) => {
-        event.preventDefault();
-        setPasteAttemptsBlocked((prev) => prev + 1);
-    }, []);
-
     const progressPercent = useMemo(() => {
         const total = config.durationSeconds;
         return ((total - timeRemaining) / total) * 100;
@@ -446,9 +441,8 @@ export function WritingPracticeView({ embedded = false }) {
                                 <textarea
                                     value={responseText}
                                     onChange={(event) => setResponseText(event.target.value)}
-                                    onPaste={handlePreventPaste}
                                     disabled={submitted}
-                                    placeholder="Start writing your response here. Copy-paste is disabled to encourage original writing."
+                                    placeholder="Start writing your response here. You can type or paste your answer."
                                     className="min-h-[280px] w-full rounded-2xl border border-slate-200 bg-white/70 px-4 py-4 text-sm leading-relaxed text-slate-700 shadow-inner focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:bg-slate-100 disabled:text-slate-500"
                                 />
                                 <div className="absolute bottom-3 right-4 flex items-center gap-3 text-xs text-slate-500">
@@ -457,12 +451,6 @@ export function WritingPracticeView({ embedded = false }) {
                                     <span>{config.minWords} required</span>
                                 </div>
                             </div>
-
-                            {pasteAttemptsBlocked > 0 ? (
-                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
-                                    Copy-paste is disabled in practice mode to support original writing. Attempts blocked: {pasteAttemptsBlocked}.
-                                </div>
-                            ) : null}
 
                             {warnings.length > 0 ? (
                                 <div className="space-y-3">

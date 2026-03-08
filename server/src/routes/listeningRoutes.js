@@ -154,21 +154,29 @@ async function generateMonologueAudio(listeningScript, section, index) {
 
 function normalizeQuestion(q, qi) {
   if (!q) return null;
-  const prompt = (q.prompt ?? q.text ?? q.question ?? "").toString().trim();
-  if (prompt.length < 2) return null;
+
+  // Prefer explicit question prompt; if missing or too short, fall back to a safe default
+  let rawPrompt = (q.prompt ?? q.text ?? q.question ?? "").toString().trim();
+  if (!rawPrompt || rawPrompt.length < 2) {
+    rawPrompt = "Complete the sentence";
+  }
+
   const answer = q.answer;
   if (answer === undefined && q.correctAnswer === undefined) return null;
   const answerVal = answer !== undefined ? answer : q.correctAnswer;
   const options = Array.isArray(q.options)
-    ? q.options.map((opt) => ({
-        value: String(opt.value ?? opt.option ?? opt.id ?? ""),
-        label: String(opt.label ?? opt.text ?? opt.option ?? opt.answer ?? ""),
-      })).filter((o) => o.value || o.label)
+    ? q.options
+        .map((opt) => ({
+          value: String(opt.value ?? opt.option ?? opt.id ?? ""),
+          label: String(opt.label ?? opt.text ?? opt.option ?? opt.answer ?? ""),
+        }))
+        .filter((o) => o.value || o.label)
     : [];
+
   return {
     ...q,
     id: typeof q.id === "number" ? q.id : qi + 1,
-    prompt,
+    prompt: rawPrompt,
     answer: Array.isArray(answerVal) ? answerVal[0] : answerVal,
     options: options.length ? options : q.options,
   };

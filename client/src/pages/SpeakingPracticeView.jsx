@@ -46,7 +46,7 @@ export function SpeakingPracticeView({ embedded = false }) {
     const [mediaRecorder, setMediaRecorder] = useState(null);
     const [audioChunks, setAudioChunks] = useState([]);
     
-    // Real-time mode state
+    // Real-time text mode state
     const [isRealtimeActive, setIsRealtimeActive] = useState(false);
     const [sessionId, setSessionId] = useState(null);
     const [conversationHistory, setConversationHistory] = useState([]);
@@ -54,6 +54,10 @@ export function SpeakingPracticeView({ embedded = false }) {
     const [isTyping, setIsTyping] = useState(false);
     const [streamingMessage, setStreamingMessage] = useState("");
     const [sessionFeedback, setSessionFeedback] = useState(null);
+
+    // Voice conversation summary (band + feedback)
+    const [voiceSessionSummary, setVoiceSessionSummary] = useState(null);
+    const [isVoiceEvaluating, setIsVoiceEvaluating] = useState(false);
     
     // Refs
     const mediaRecorderRef = useRef(null);
@@ -321,7 +325,7 @@ export function SpeakingPracticeView({ embedded = false }) {
         }
     };
 
-    // End real-time session
+    // End real-time text session (chat mode)
     const endRealtimeSession = async () => {
         try {
             setIsTyping(true);
@@ -342,9 +346,14 @@ export function SpeakingPracticeView({ embedded = false }) {
             if (data.success) {
                 setSessionFeedback(data.feedback);
 
-                // Extract band score from feedback if available
-                const bandScoreMatch = data.feedback?.match(/band\s*score[:\s]*([0-9.]+)/i);
-                const bandScore = bandScoreMatch ? parseFloat(bandScoreMatch[1]) : 0;
+                // Prefer numeric bandScore from API; fall back to parsing feedback if needed
+                let bandScore = 0;
+                if (typeof data.bandScore === "number" && !Number.isNaN(data.bandScore)) {
+                    bandScore = data.bandScore;
+                } else {
+                    const bandScoreMatch = data.feedback?.match(/band\s*score[:\s]*([0-9.]+)/i);
+                    bandScore = bandScoreMatch ? parseFloat(bandScoreMatch[1]) : 0;
+                }
 
                 // Save to localStorage for progress tracking
                 const historyEntry = {
@@ -376,6 +385,67 @@ export function SpeakingPracticeView({ embedded = false }) {
         }
     };
 
+    // End real-time voice session (voice mode) via callback from VoiceConversation
+    const handleVoiceSessionEnd = async ({ sessionId, conversationHistory }) => {
+        try {
+            setIsVoiceEvaluating(true);
+            const response = await fetch('http://localhost:5000/api/speaking/realtime/end', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    sessionId,
+                    conversationHistory,
+                    userId: user?.email || user?.id || 'current-user'
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Prefer numeric bandScore from API; fallback to parsing
+                let bandScore = 0;
+                if (typeof data.bandScore === "number" && !Number.isNaN(data.bandScore)) {
+                    bandScore = data.bandScore;
+                } else {
+                    const bandScoreMatch = data.feedback?.match(/band\s*score[:\s]*([0-9.]+)/i);
+                    bandScore = bandScoreMatch ? parseFloat(bandScoreMatch[1]) : 0;
+                }
+
+                setVoiceSessionSummary({
+                    bandScore,
+                    feedback: data.feedback
+                });
+
+                // Save to localStorage for dashboard / performance integration
+                const historyEntry = {
+                    id: Date.now(),
+                    sessionId,
+                    conversationHistory,
+                    feedback: data.feedback,
+                    bandScore,
+                    submittedAt: new Date().toISOString(),
+                    type: 'realtime_practice'
+                };
+
+                const userId = user?.email || user?.id || null;
+                const existingHistory = loadHistory(userId);
+                const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                saveHistory(updatedHistory, userId);
+
+                // Notify dashboards
+                window.dispatchEvent(new Event('progressUpdated'));
+            } else {
+                console.error('Failed to end voice session:', data.error);
+            }
+        } catch (error) {
+            console.error('Error ending voice session:', error);
+        } finally {
+            setIsVoiceEvaluating(false);
+        }
+    };
+
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
@@ -403,6 +473,7 @@ export function SpeakingPracticeView({ embedded = false }) {
         setEvaluation(null);
         setTranscript("");
         setSessionFeedback(null);
+        setVoiceSessionSummary(null);
         setConversationHistory([]);
         setIsRealtimeActive(false);
         setSessionId(null);
@@ -874,11 +945,41 @@ export function SpeakingPracticeView({ embedded = false }) {
                         </div>
                     )}
 
-                    <div className="max-w-4xl mx-auto">
+                    <div className="max-w-4xl mx-auto space-y-6">
                         <Panel title="Real-time Voice Conversation" className="bg-white/80 backdrop-blur rounded-2xl shadow-md">
-                            <VoiceConversation onEndSession={resetToModeSelection} />
-                    </Panel>
-                </div>
+                            <VoiceConversation onEndSession={handleVoiceSessionEnd} />
+                        </Panel>
+
+                        {isVoiceEvaluating && (
+                            <Panel className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-2xl border border-slate-200 shadow-sm">
+                                <div className="flex items-center justify-center space-x-3">
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
+                                    <p className="text-slate-700 font-medium">Analyzing your speaking session...</p>
+                                </div>
+                            </Panel>
+                        )}
+
+                        {voiceSessionSummary && !isVoiceEvaluating && (
+                            <Panel className="bg-gradient-to-br from-green-50 to-blue-50 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-sm text-slate-600">Real-time speaking band</p>
+                                        <p className="text-3xl font-extrabold text-green-700">
+                                            {voiceSessionSummary.bandScore ? voiceSessionSummary.bandScore.toFixed(1) : "--"}
+                                        </p>
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                        Saved to dashboard & performance history.
+                                    </div>
+                                </div>
+                                <div className="border-t border-slate-200 pt-4">
+                                    <p className="text-sm text-slate-700 whitespace-pre-line">
+                                        {voiceSessionSummary.feedback}
+                                    </p>
+                                </div>
+                            </Panel>
+                        )}
+                    </div>
             </div>
         );
         return embedded ? voiceModeContent : <AppLayout>{voiceModeContent}</AppLayout>;

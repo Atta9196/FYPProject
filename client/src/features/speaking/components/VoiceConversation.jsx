@@ -1138,6 +1138,18 @@ export function VoiceConversation({ onEndSession }) {
         setIsProcessing(false);
         // Always keep streaming mode enabled
         setVoiceActivity(false);
+
+        // Notify parent so it can trigger AI evaluation and save band score
+        if (typeof onEndSession === 'function') {
+            try {
+                onEndSession({
+                    sessionId,
+                    conversationHistory,
+                });
+            } catch (err) {
+                console.warn('onEndSession handler failed:', err);
+            }
+        }
     };
 
     return (

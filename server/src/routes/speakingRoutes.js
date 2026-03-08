@@ -782,8 +782,28 @@ Guidelines:
 });
 
 /**
+ * Helper: extract numeric band score from feedback text or fall back to heuristic.
+ */
+function extractBandScoreFromFeedback(feedback, userMessageCount = 0) {
+  if (typeof feedback === "string") {
+    const match =
+      feedback.match(/band\s*score[^0-9]*([0-9](?:\.[0-9])?)/i) ||
+      feedback.match(/band[^0-9]*([0-9](?:\.[0-9])?)/i);
+    if (match) {
+      const val = parseFloat(match[1]);
+      if (!Number.isNaN(val) && val >= 0 && val <= 9) return val;
+    }
+  }
+  // Simple heuristic based on how much the student spoke
+  if (userMessageCount >= 7) return 7.0;
+  if (userMessageCount >= 5) return 6.5;
+  if (userMessageCount >= 3) return 6.0;
+  return 5.5;
+}
+
+/**
  * POST /api/speaking/realtime/end
- * End the real-time session and provide summary feedback
+ * End the real-time session and provide summary feedback + numeric bandScore
  */
 router.post("/realtime/end", async (req, res) => {
   try {
@@ -809,14 +829,15 @@ router.post("/realtime/end", async (req, res) => {
       });
     }
     
+    const userMessages = conversationHistory.filter((msg) => msg.role === "user");
+
     console.log("🏁 Ending real-time conversation session...");
     console.log("📋 Request body:", { sessionId, userId, conversationHistoryLength: conversationHistory?.length || 0 });
     
     // Fallback feedback templates
     const getFallbackFeedback = (conversationHistory) => {
-      const userMessages = conversationHistory.filter(msg => msg.role === 'user');
       const messageCount = userMessages.length;
-      
+
       let feedback = "Thank you for completing this IELTS speaking practice session!\n\n";
       
       if (messageCount >= 5) {
@@ -842,7 +863,10 @@ router.post("/realtime/end", async (req, res) => {
     
     try {
       // Try OpenAI first - use gpt-4o-mini for summaries (cost-effective)
-      const conversationText = conversationHistory.slice(-10).map(msg => `${msg.role}: ${msg.content}`).join('\n'); // Only last 10 messages
+      const conversationText = conversationHistory
+        .slice(-10)
+        .map((msg) => `${msg.role}: ${msg.content}`)
+        .join("\n"); // Only last 10 messages
       const summaryPrompt = `IELTS practice summary. Provide brief feedback:
 
 1. Overall performance
@@ -906,6 +930,9 @@ Provide concise feedback.`;
       
       console.log("✅ Summary feedback validated and ready to send");
       
+      // Derive numeric band score
+      const bandScore = extractBandScoreFromFeedback(feedback, userMessages.length);
+
       // Save session to Firestore
       if (db) {
         try {
@@ -914,6 +941,7 @@ Provide concise feedback.`;
             sessionId: sessionId,
             conversationHistory: conversationHistory,
             feedback: feedback,
+            bandScore,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             type: 'realtime_practice'
           };
@@ -927,7 +955,8 @@ Provide concise feedback.`;
       
       res.json({
         feedback: feedback,
-        success: true
+        bandScore,
+        success: true,
       });
       
     } catch (openaiError) {
@@ -935,6 +964,7 @@ Provide concise feedback.`;
       
       // Use fallback feedback
       const fallbackFeedback = getFallbackFeedback(conversationHistory);
+      const bandScore = extractBandScoreFromFeedback(fallbackFeedback, userMessages.length);
       
       // Save session to Firestore with fallback feedback
       if (db) {
@@ -944,6 +974,7 @@ Provide concise feedback.`;
             sessionId: sessionId,
             conversationHistory: conversationHistory,
             feedback: fallbackFeedback,
+            bandScore,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             type: 'realtime_practice'
           };
@@ -957,7 +988,8 @@ Provide concise feedback.`;
       
       res.json({
         feedback: fallbackFeedback,
-        success: true
+        bandScore,
+        success: true,
       });
     }
     

@@ -20,6 +20,9 @@ export default function Sidebar() {
                 <SideLink to="/writing" icon={PenIcon} label="Writing Practice" />
                 <SideLink to="/mcq" icon={ListIcon} label="MCQ Practice" />
                 <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" />
+                <Section label="Games" />
+                <SideLink to="/game" icon={TabsIcon} label="Mini Games" />
+                <SideLink to="/p4game" icon={TabsIcon} label="4ps Game" />
                 <Section label="Account" />
                 <SideLink to="/profile" icon={UserIcon} label="Profile" />
                 <SideLink to="/support" icon={HelpIcon} label="Support" />

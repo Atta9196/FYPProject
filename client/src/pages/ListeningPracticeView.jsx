@@ -83,17 +83,41 @@ function normalizeOption(option) {
     return value || label ? { value: value || label, label: label || value } : null;
 }
 
-/** IELTS-style instruction for fill-in boxes: one word, two words, or number. */
+/** Short, exact hint for fill-in boxes, based on the actual answer shape. */
 function getFillInstruction(question) {
-    if (question.instructions && String(question.instructions).trim()) {
-        return String(question.instructions).trim();
+    const rawAnswers = Array.isArray(question.answer) ? question.answer : [question.answer];
+    const answers = rawAnswers
+        .map((a) => (a == null ? "" : String(a).trim()))
+        .filter((a) => a.length > 0);
+
+    const tokenize = (val) => val.split(/\s+/).filter(Boolean);
+    const isNumberToken = (t) => /^[0-9]+([.,][0-9]+)?$/.test(t.replace(/[^0-9.,]/g, ""));
+
+    if (answers.length) {
+        const tokensList = answers.map(tokenize);
+        const allFirstNumeric = tokensList.every((tokens) => tokens.length && isNumberToken(tokens[0]));
+        if (allFirstNumeric) {
+            return "Number only.";
+        }
+
+        const lengths = tokensList.map((t) => t.length);
+        const sameLength = lengths.every((len) => len === lengths[0]);
+        if (sameLength) {
+            const n = lengths[0];
+            if (n === 1) return "One word only.";
+            if (n === 2) return "Two words only.";
+            if (n === 3) return "Three words only.";
+            return `Exactly ${n} words.`;
+        }
     }
+
     const maxWords = question.maxWords;
-    if (maxWords === 1) return "Write ONE WORD ONLY.";
-    if (maxWords === 2) return "Write NO MORE THAN TWO WORDS.";
-    if (maxWords === 3) return "Write NO MORE THAN THREE WORDS.";
-    if (typeof maxWords === "number" && maxWords > 0) return `Write NO MORE THAN ${maxWords} WORDS.`;
-    return "Write ONE WORD AND/OR A NUMBER.";
+    if (maxWords === 1) return "One word only.";
+    if (maxWords === 2) return "Two words only.";
+    if (maxWords === 3) return "Up to three words.";
+    if (typeof maxWords === "number" && maxWords > 0) return `Up to ${maxWords} words.`;
+
+    return "Short answer.";
 }
 
 function getCorrectLabel(question) {
@@ -852,7 +876,10 @@ function QuestionCard({ question, value, onChange, disabled, feedback, showFeedb
                     </p>
                     <span className="text-xs uppercase tracking-wide text-slate-400">{question.type}</span>
                 </div>
-                {question.instructions && <p className="text-xs text-slate-500">{question.instructions}</p>}
+                {/* Instructions for MCQ shown here; fill-type hint shown once below in input area only */}
+                {(question.type === "multiple" || question.type === "matching") && question.instructions && (
+                    <p className="text-xs text-slate-500">{question.instructions}</p>
+                )}
             </div>
 
             <QuestionInput
@@ -923,7 +950,7 @@ function QuestionInput({ question, value, onChange, disabled }) {
     const fillHint = getFillInstruction(question);
     return (
         <div className="space-y-1.5">
-            <p className="text-xs font-medium text-slate-500">
+            <p className="text-xs text-slate-500">
                 {fillHint}
             </p>
             <input
@@ -932,7 +959,7 @@ function QuestionInput({ question, value, onChange, disabled }) {
                 onChange={(event) => onChange(event.target.value)}
                 disabled={disabled}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500 disabled:bg-slate-100 disabled:text-slate-500"
-                placeholder="e.g. one word or number"
+                placeholder={fillHint.includes("word") ? "Your answer" : "Your answer"}
             />
         </div>
     );

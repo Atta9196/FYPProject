@@ -448,14 +448,16 @@ export function ReadingPracticeView({ embedded = false }) {
     }, []);
 
     const handleStartTest = useCallback(() => {
-        if (timerStatus === "running" || !activeSet) return;
+        // Only start timer if test is loaded and not already running
+        if (timerStatus === "running") return;
+        if (!activeSet) return;
         setTimerStatus("running");
         setTimeRemaining(TIMER_SECONDS);
         setSubmitted(false);
         setSubmitting(false);
         setResults(null);
         setErrorMessage(null);
-    }, [timerStatus]);
+    }, [timerStatus, activeSet]);
 
     const handleAnswerChange = useCallback((questionId, value) => {
         setAnswers((prev) => ({
