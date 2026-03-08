@@ -127,7 +127,11 @@ function calculateBandScores(history) {
             if (typeof entry.band === 'number') return entry.band;
             if (typeof entry.band === 'string') {
                 const num = parseFloat(entry.band);
-                return isNaN(num) ? 0 : num;
+                if (!isNaN(num)) return num;
+            }
+            if (entry.bandScore != null) {
+                const num = parseFloat(entry.bandScore);
+                if (!isNaN(num)) return num;
             }
             if (entry.overallBand) {
                 const num = parseFloat(entry.overallBand);
@@ -508,7 +512,7 @@ export function getModuleBreakdown(userId = null) {
         .filter(b => b > 0);
     
     const listeningBands = progress.listening
-        .map(e => parseFloat(e.band || 0))
+        .map(e => parseFloat(e.band || e.bandScore || 0))
         .filter(b => b > 0);
 
     const speakingBands = progress.speaking
@@ -609,9 +613,9 @@ export function getPracticeHistory(limit = 20, userId = null) {
         allEntries.push({
             date: entry.submittedAt,
             type: 'Listening Test',
-            band: parseFloat(entry.band || 0),
+            band: parseFloat(entry.band || entry.bandScore || 0),
             duration: '40 min',
-            feedback: `Score: ${entry.totalScore || entry.score || 0}/${entry.totalQuestions || 40}`
+            feedback: entry.feedback || `Score: ${entry.totalScore || entry.score || 0}/${entry.totalQuestions || 40}`
         });
     });
 

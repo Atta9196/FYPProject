@@ -51,7 +51,8 @@ const defaultSectionState = (section) => ({
     submitted: false,
     score: 0,
     questionFeedback: {},
-    bandEstimate: null
+    bandEstimate: null,
+    audioError: null
 });
 
 const normalizeAnswer = (value = "") =>
@@ -70,9 +71,35 @@ const wordCount = (value = "") =>
         .split(/\s+/)
         .filter(Boolean).length;
 
+function getQuestionPrompt(question) {
+    const p = question?.prompt ?? question?.text ?? question?.question ?? "";
+    return typeof p === "string" ? p : String(p || "");
+}
+
+function normalizeOption(option) {
+    if (!option || typeof option !== "object") return null;
+    const value = String(option.value ?? option.option ?? option.id ?? "").trim();
+    const label = String(option.label ?? option.text ?? option.option ?? option.answer ?? "").trim();
+    return value || label ? { value: value || label, label: label || value } : null;
+}
+
+/** IELTS-style instruction for fill-in boxes: one word, two words, or number. */
+function getFillInstruction(question) {
+    if (question.instructions && String(question.instructions).trim()) {
+        return String(question.instructions).trim();
+    }
+    const maxWords = question.maxWords;
+    if (maxWords === 1) return "Write ONE WORD ONLY.";
+    if (maxWords === 2) return "Write NO MORE THAN TWO WORDS.";
+    if (maxWords === 3) return "Write NO MORE THAN THREE WORDS.";
+    if (typeof maxWords === "number" && maxWords > 0) return `Write NO MORE THAN ${maxWords} WORDS.`;
+    return "Write ONE WORD AND/OR A NUMBER.";
+}
+
 function getCorrectLabel(question) {
     if (question.type === "multiple" || question.type === "matching") {
-        const option = question.options.find((option) => option.value === question.answer);
+        const opts = Array.isArray(question.options) ? question.options : [];
+        const option = opts.map(normalizeOption).filter(Boolean).find((o) => o.value === question.answer);
         return option ? `${option.value}. ${option.label}` : question.answer;
     }
     const answers = Array.isArray(question.answer) ? question.answer : [question.answer];
@@ -161,13 +188,17 @@ export function ListeningPracticeView({ embedded = false }) {
     const [sectionStates, setSectionStates] = useState({});
     const audioRefs = useRef({});
 
+    const apiBase = typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL
+        ? import.meta.env.VITE_API_BASE_URL
+        : "http://localhost:5000";
+
     // Load AI-generated listening test
     const loadAIGeneratedListening = useCallback(async () => {
         try {
             setGenerating(true);
             setErrorMessage(null);
             
-            const response = await fetch('http://localhost:5000/api/listening/generate');
+            const response = await fetch(`${apiBase}/api/listening/generate`);
             const data = await response.json();
             
             if (data.success && data.sections) {
@@ -198,7 +229,7 @@ export function ListeningPracticeView({ embedded = false }) {
             setGenerating(false);
             setLoading(false);
         }
-    }, []);
+    }, [apiBase]);
 
     // Load initial listening test on mount
     useEffect(() => {
@@ -266,16 +297,23 @@ export function ListeningPracticeView({ embedded = false }) {
                 return {
                     ...defaultSectionState(section),
                     phase: "playing",
-                    audioStarted: true
+                    audioStarted: true,
+                    audioError: null
                 };
             });
 
             audioElement.currentTime = 0;
-            audioElement.play().catch(() => {
-                // Autoplay policies may block playback; keep state unchanged
+            audioElement.load();
+            audioElement.play().catch((err) => {
+                console.error("Listening audio play failed:", err);
+                updateSectionState(sectionId, () => ({
+                    audioError: "Audio failed to load or play. Ensure the server is running (port 5000) and try again.",
+                    audioStarted: false,
+                    phase: "idle"
+                }));
             });
         },
-        [updateSectionState]
+        [updateSectionState, listeningSections]
     );
 
     const handleAnswerChange = useCallback((sectionId, questionId, value) => {
@@ -322,47 +360,89 @@ export function ListeningPracticeView({ embedded = false }) {
                     [sectionId]: updated
                 };
 
-                // Check if all sections are completed and save to localStorage
+                // Move to next section when this one is submitted (manual or auto when time ends)
                 const allSectionsCompleted = listeningSections.every(
                     (s) => newState[s.id]?.submitted === true
                 );
+                if (!allSectionsCompleted) {
+                    const nextIdx = listeningSections.findIndex((s) => s.id === sectionId) + 1;
+                    if (nextIdx > 0 && nextIdx < listeningSections.length) {
+                        setActiveSectionId(listeningSections[nextIdx].id);
+                    }
+                }
 
                 if (allSectionsCompleted) {
-                    // Calculate total score and band
                     const totalScore = listeningSections.reduce(
                         (sum, s) => sum + (newState[s.id]?.score || 0),
                         0
                     );
-                    const finalBand = getBandFromScore(totalScore);
-
-                    // Save to localStorage
-                    const historyEntry = {
-                        id: Date.now(),
-                        totalScore,
-                        totalQuestions: totalListeningQuestions,
-                        band: parseFloat(finalBand) || 0,
-                        sections: listeningSections.map((s) => ({
-                            sectionId: s.id,
-                            sectionTitle: s.title,
-                            score: newState[s.id]?.score || 0,
-                            totalQuestions: s.questions.length
-                        })),
-                        submittedAt: new Date().toISOString()
-                    };
-
+                    const sectionScores = listeningSections.map((s) => ({
+                        sectionId: s.id,
+                        score: newState[s.id]?.score || 0,
+                        total: s.questions.length
+                    }));
+                    const sectionsSummary = listeningSections.map((s) => ({
+                        sectionId: s.id,
+                        sectionTitle: s.title,
+                        score: newState[s.id]?.score || 0,
+                        totalQuestions: s.questions.length
+                    }));
                     const userId = user?.email || user?.id || null;
-                    const existingHistory = loadHistory(userId);
-                    const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                    saveHistory(updatedHistory, userId);
-
-                    // Dispatch event to update dashboards in real-time
-                    window.dispatchEvent(new Event('progressUpdated'));
+                    // AI-based evaluation then save for dashboard/performance integration
+                    fetch(`${apiBase}/api/listening/evaluate`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            totalScore,
+                            totalQuestions: totalListeningQuestions,
+                            sectionScores
+                        })
+                    })
+                        .then((res) => res.json())
+                        .then((data) => {
+                            const bandScore = data.success && typeof data.bandScore === "number"
+                                ? data.bandScore
+                                : parseFloat(getBandFromScore(totalScore)) || 0;
+                            const historyEntry = {
+                                id: Date.now(),
+                                module: "listening",
+                                totalScore,
+                                totalQuestions: totalListeningQuestions,
+                                band: bandScore,
+                                bandScore,
+                                feedback: data.feedback || `Score: ${totalScore}/${totalListeningQuestions}`,
+                                sections: sectionsSummary,
+                                submittedAt: new Date().toISOString()
+                            };
+                            const existingHistory = loadHistory(userId);
+                            const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                            saveHistory(updatedHistory, userId);
+                            window.dispatchEvent(new Event("progressUpdated"));
+                        })
+                        .catch(() => {
+                            const finalBand = parseFloat(getBandFromScore(totalScore)) || 0;
+                            const historyEntry = {
+                                id: Date.now(),
+                                module: "listening",
+                                totalScore,
+                                totalQuestions: totalListeningQuestions,
+                                band: finalBand,
+                                bandScore: finalBand,
+                                feedback: `Score: ${totalScore}/${totalListeningQuestions}`,
+                                sections: sectionsSummary,
+                                submittedAt: new Date().toISOString()
+                            };
+                            const existingHistory = loadHistory(userId);
+                            const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                            saveHistory(updatedHistory, userId);
+                            window.dispatchEvent(new Event("progressUpdated"));
+                        });
                 }
 
                 return newState;
             });
         },
-        [setSectionStates, listeningSections, totalListeningQuestions]
+        [setSectionStates, setActiveSectionId, listeningSections, totalListeningQuestions, apiBase, user]
     );
 
     useEffect(() => {
@@ -498,8 +578,17 @@ export function ListeningPracticeView({ embedded = false }) {
         activeSection.reviewSeconds > 0
             ? 1 - activeState.reviewRemaining / activeSection.reviewSeconds
             : 1;
-    const submitDisabled =
-        activeState.submitted || (activeState.phase !== "review" && activeState.phase !== "completed");
+    // Enable submit when: not submitted AND (in review/completed/awaiting-timer OR user has filled at least one answer)
+    const hasFilledAnswer = Object.values(activeState.answers || {}).some(
+        (v) => v != null && String(v).trim() !== ""
+    );
+    const inReviewPhase =
+        activeState.phase === "review" ||
+        activeState.phase === "completed" ||
+        activeState.phase === "awaiting-timer";
+    const canSubmit =
+        !activeState.submitted && (inReviewPhase || hasFilledAnswer);
+    const submitDisabled = !canSubmit;
 
     const mainContent = (
         <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
@@ -600,6 +689,11 @@ export function ListeningPracticeView({ embedded = false }) {
                                     Audio can only be played once. It locks after playback ends.
                                 </span>
                             </div>
+                            {activeState.audioError && (
+                                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+                                    {activeState.audioError}
+                                </p>
+                            )}
 
                             <audio
                                 ref={(element) => {
@@ -611,6 +705,16 @@ export function ListeningPracticeView({ embedded = false }) {
                                 preload="auto"
                                 className="hidden"
                                 onEnded={() => handleAudioEnded(activeSection.id)}
+                                onError={(e) => {
+                                    const msg = e?.target?.error?.message || "Audio failed to load";
+                                    console.error("Listening audio load error:", msg);
+                                    updateSectionState(activeSection.id, (s) => ({
+                                        ...s,
+                                        audioError: "Audio failed to load. Check server and network.",
+                                        audioStarted: false,
+                                        phase: "idle"
+                                    }));
+                                }}
                             />
 
                             <TimerBar
@@ -741,10 +845,10 @@ function StatusBadge({ phase, submitted }) {
 function QuestionCard({ question, value, onChange, disabled, feedback, showFeedback }) {
     return (
         <div className="rounded-xl border border-slate-200 p-4 space-y-3 bg-white shadow-sm">
-            <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-slate-800">
-                        Q{question.id}. {question.prompt}
+                        Q{question.number ?? question.id}. {getQuestionPrompt(question)}
                     </p>
                     <span className="text-xs uppercase tracking-wide text-slate-400">{question.type}</span>
                 </div>
@@ -784,12 +888,15 @@ function QuestionCard({ question, value, onChange, disabled, feedback, showFeedb
 }
 
 function QuestionInput({ question, value, onChange, disabled }) {
-    if (question.type === "multiple" || question.type === "matching") {
+    const options = Array.isArray(question.options)
+        ? question.options.map(normalizeOption).filter(Boolean)
+        : [];
+    if ((question.type === "multiple" || question.type === "matching") && options.length > 0) {
         return (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {question.options.map((option) => (
+                {options.map((option, idx) => (
                     <label
-                        key={option.value}
+                        key={option.value + "-" + idx}
                         className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
                             value === option.value
                                 ? "border-sky-400 bg-sky-50 text-sky-700"
@@ -813,14 +920,20 @@ function QuestionInput({ question, value, onChange, disabled }) {
         );
     }
 
+    const fillHint = getFillInstruction(question);
     return (
-        <input
-            type="text"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            disabled={disabled}
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500 disabled:bg-slate-100 disabled:text-slate-500"
-            placeholder="Type your answer here"
-        />
+        <div className="space-y-1.5">
+            <p className="text-xs font-medium text-slate-500">
+                {fillHint}
+            </p>
+            <input
+                type="text"
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                disabled={disabled}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500 disabled:bg-slate-100 disabled:text-slate-500"
+                placeholder="e.g. one word or number"
+            />
+        </div>
     );
 }

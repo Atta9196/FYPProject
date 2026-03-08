@@ -25,7 +25,7 @@ export function AppLayout({ children }) {
                 <div className="absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-sky-200/40 blur-3xl" />
             </div>
             <div className="flex min-h-screen">
-                <aside className="hidden md:flex md:w-72 flex-col bg-white/70 backdrop-blur-xl border-r border-slate-200/70 shadow-sm">
+                <aside className="hidden md:flex md:w-72 flex-col bg-white/70 backdrop-blur-xl border-r border-slate-200/70 shadow-sm md:sticky md:top-0 md:h-screen md:overflow-y-auto">
                     <div className="h-16 flex items-center gap-3 px-6 border-b border-slate-200">
                         <Link to="/" className="flex items-center gap-3">
                             <img 
