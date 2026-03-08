@@ -1,4 +1,4 @@
-const { registerUser, loginUser, verifyGoogleIdToken, sendPasswordReset } = require('../services/authService');
+const { registerUser, loginUser, verifyGoogleIdToken, sendPasswordReset, changePassword } = require('../services/authService');
 const jwt = require('jsonwebtoken');
 
 async function handleRegister(req, res) {
@@ -72,9 +72,24 @@ async function handleForgotPassword(req, res) {
     }
 }
 
+async function handleChangePassword(req, res) {
+    try {
+        const { email, currentPassword, newPassword } = req.body;
+        if (!email || !currentPassword || !newPassword) {
+            return res.status(400).json({ message: 'Email, current password, and new password are required.' });
+        }
+        const result = await changePassword({ email, currentPassword, newPassword });
+        return res.status(200).json(result);
+    } catch (err) {
+        const status = err.status || 401;
+        return res.status(status).json({ message: err.message || 'Failed to change password.' });
+    }
+}
+
 module.exports = {
 	handleRegister,
 	handleLogin,
-    handleGoogle,
-    handleForgotPassword,
+	handleGoogle,
+	handleForgotPassword,
+	handleChangePassword,
 };

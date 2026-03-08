@@ -94,4 +94,17 @@ export async function forgotPassword({ email }) {
 	return data;
 }
 
+export async function changePassword({ email, currentPassword, newPassword }) {
+	const res = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email, currentPassword, newPassword }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) {
+		throw new Error(data.message || 'Failed to change password.');
+	}
+	return data;
+}
+
 

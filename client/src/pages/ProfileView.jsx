@@ -3,6 +3,7 @@ import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import { useAuth } from "../contexts/AuthContext";
 import { getAllProgressData } from "../services/progressService";
+import { changePassword as apiChangePassword } from "../services/api/authService";
 import { Link } from "react-router-dom";
 
 export function ProfileView() {
@@ -174,7 +175,6 @@ export function ProfileView() {
         setMessage({ type: '', text: '' });
         
         try {
-            // Validate
             if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
                 setMessage({ type: 'error', text: 'All password fields are required' });
                 setPasswordSaving(false);
@@ -193,22 +193,31 @@ export function ProfileView() {
                 return;
             }
             
-            // Simulate API call (replace with actual API call to /api/auth/change-password)
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            const email = user?.email;
+            if (!email) {
+                setMessage({ type: 'error', text: 'Email not found. Please sign in again.' });
+                setPasswordSaving(false);
+                return;
+            }
             
-            setMessage({ type: 'success', text: 'Password changed successfully! Please login again.' });
+            await apiChangePassword({
+                email,
+                currentPassword: passwordData.currentPassword,
+                newPassword: passwordData.newPassword,
+            });
+            
+            setMessage({ type: 'success', text: 'Password changed successfully! Please sign in again.' });
             setPasswordData({
                 currentPassword: '',
                 newPassword: '',
                 confirmPassword: ''
             });
             
-            // Logout after password change
             setTimeout(() => {
                 logout();
-            }, 2000);
+            }, 1500);
         } catch (error) {
-            setMessage({ type: 'error', text: 'Failed to change password. Please try again.' });
+            setMessage({ type: 'error', text: error?.message || 'Failed to change password. Please try again.' });
         } finally {
             setPasswordSaving(false);
         }
@@ -298,8 +307,8 @@ export function ProfileView() {
                 {/* Header */}
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                        <h1 className="text-3xl md:text-4xl font-extrabold text-sky-700">Profile Settings</h1>
-                        <p className="text-slate-600 mt-2">Manage your account settings and preferences</p>
+                        <h1 className="text-3xl md:text-4xl font-extrabold text-sky-700 dark:text-sky-300">Profile Settings</h1>
+                        <p className="text-slate-600 dark:text-slate-400 mt-2">Manage your account settings and preferences</p>
                     </div>
                 </div>
 
@@ -307,8 +316,8 @@ export function ProfileView() {
                 {message.text && (
                     <div className={`rounded-xl p-4 ${
                         message.type === 'success' 
-                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' 
-                            : 'bg-rose-50 border border-rose-200 text-rose-700'
+                            ? 'bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300' 
+                            : 'bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-300'
                     }`}>
                         {message.text}
                     </div>
@@ -397,31 +406,33 @@ export function ProfileView() {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                                     Phone Number
                                 </label>
                                 <input
                                     type="tel"
-                                    value={profileData.phone}
+                                    value={profileData.phone ?? ''}
                                     onChange={(e) => handleProfileChange('phone', e.target.value)}
                                     disabled={!isEditing}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                    className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-white dark:bg-slate-700 dark:text-slate-100 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                     placeholder="+1 (555) 000-0000"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                                     Bio
                                 </label>
                                 <textarea
-                                    value={profileData.bio}
+                                    value={profileData.bio ?? ''}
                                     onChange={(e) => handleProfileChange('bio', e.target.value)}
                                     disabled={!isEditing}
-                                    rows={3}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                                    placeholder="Tell us about yourself..."
+                                    rows={4}
+                                    maxLength={500}
+                                    className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-white dark:bg-slate-700 dark:text-slate-100 resize-none disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
+                                    placeholder="Add a short bio (e.g. your goals, experience, or why you're preparing for IELTS)..."
                                 />
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{ (profileData.bio || '').length } / 500 characters</p>
                             </div>
 
                             <div>
@@ -441,7 +452,7 @@ export function ProfileView() {
                             </div>
 
                             {/* Action Buttons */}
-                            <div className="flex gap-3 pt-4 border-t border-slate-200">
+                            <div className="flex flex-wrap gap-3 pt-4 border-t border-slate-200">
                                 {!isEditing ? (
                                     <button
                                         onClick={() => setIsEditing(true)}
@@ -492,12 +503,6 @@ export function ProfileView() {
                             <div className="p-4 bg-slate-50 rounded-lg">
                                 <p className="text-xs text-slate-500 mb-1">Account Status</p>
                                 <p className="text-sm font-semibold text-emerald-600">Active</p>
-                            </div>
-                            <div className="p-4 bg-slate-50 rounded-lg">
-                                <p className="text-xs text-slate-500 mb-1">Email Verified</p>
-                                <p className="text-sm font-semibold text-slate-700">
-                                    {user?.emailVerified ? '✓ Verified' : '⚠ Not Verified'}
-                                </p>
                             </div>
                             <div className="pt-4 border-t border-slate-200">
                                 <Link
@@ -569,10 +574,10 @@ export function ProfileView() {
                     {/* Preferences */}
                     <Panel title="Preferences">
                         <div className="space-y-4">
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg transition-colors">
                                 <div>
-                                    <p className="text-sm font-medium text-slate-700">Dark Mode</p>
-                                    <p className="text-xs text-slate-500">Toggle dark theme</p>
+                                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Dark Mode</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Toggle dark theme</p>
                                 </div>
                                 <label className="inline-flex items-center cursor-pointer">
                                     <input
@@ -581,13 +586,13 @@ export function ProfileView() {
                                         onChange={(e) => handlePreferenceChange('darkMode', e.target.checked)}
                                         className="sr-only peer"
                                     />
-                                    <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
+                                    <div className="w-11 h-6 bg-slate-300 dark:bg-slate-600 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
                                 </label>
                             </div>
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg transition-colors">
                                 <div>
-                                    <p className="text-sm font-medium text-slate-700">Email Notifications</p>
-                                    <p className="text-xs text-slate-500">Receive email updates</p>
+                                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Email Notifications</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Receive email updates</p>
                                 </div>
                                 <label className="inline-flex items-center cursor-pointer">
                                     <input
@@ -596,13 +601,13 @@ export function ProfileView() {
                                         onChange={(e) => handlePreferenceChange('emailNotifications', e.target.checked)}
                                         className="sr-only peer"
                                     />
-                                    <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
+                                    <div className="w-11 h-6 bg-slate-300 dark:bg-slate-600 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
                                 </label>
                             </div>
-                            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                            <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg transition-colors">
                                 <div>
-                                    <p className="text-sm font-medium text-slate-700">Study Reminders</p>
-                                    <p className="text-xs text-slate-500">Get reminders to practice</p>
+                                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Study Reminders</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Get reminders to practice</p>
                                 </div>
                                 <label className="inline-flex items-center cursor-pointer">
                                     <input
@@ -611,24 +616,8 @@ export function ProfileView() {
                                         onChange={(e) => handlePreferenceChange('studyReminders', e.target.checked)}
                                         className="sr-only peer"
                                     />
-                                    <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
+                                    <div className="w-11 h-6 bg-slate-300 dark:bg-slate-600 rounded-full peer peer-checked:bg-sky-600 relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:h-5 after:w-5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
                                 </label>
-                            </div>
-                            <div className="p-3 bg-slate-50 rounded-lg">
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    Language
-                                </label>
-                                <select
-                                    value={preferences.language}
-                                    onChange={(e) => handlePreferenceChange('language', e.target.value)}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
-                                >
-                                    <option value="en">English</option>
-                                    <option value="es">Spanish</option>
-                                    <option value="fr">French</option>
-                                    <option value="de">German</option>
-                                    <option value="zh">Chinese</option>
-                                </select>
                             </div>
                         </div>
                     </Panel>

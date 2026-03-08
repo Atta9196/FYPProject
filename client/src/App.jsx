@@ -1,9 +1,17 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css"; // Tailwind import
 
 // Context Providers
 import { FirebaseAuthProvider, AppProvider } from "./context";
+
+function DarkModeInit() {
+  useEffect(() => {
+    const isDark = localStorage.getItem('darkMode') === 'true';
+    document.documentElement.classList.toggle('dark', isDark);
+  }, []);
+  return null;
+}
 import GoogleAuthProvider from "./components/GoogleAuth/GoogleAuthProvider";
 
 // Pages
@@ -34,10 +42,11 @@ import { Navbar, Footer, ProtectedRoute } from "./components";
 function App() {
   return (
     <FirebaseAuthProvider>
+      <DarkModeInit />
       <AppProvider>
         <GoogleAuthProvider>
           <Router>
-            <div className="min-h-screen bg-gray-50">
+            <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
               <Routes>
                 {/* ✅ Public Routes */}
                 <Route path="/" element={<LandingPage />} />

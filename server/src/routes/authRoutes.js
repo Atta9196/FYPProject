@@ -1,6 +1,6 @@
 const express = require('express');
 const fetch = require('node-fetch');
-const { handleRegister, handleLogin, handleGoogle, handleForgotPassword } = require('../controllers/authController');
+const { handleRegister, handleLogin, handleGoogle, handleForgotPassword, handleChangePassword } = require('../controllers/authController');
 
 const router = express.Router();
 
@@ -8,6 +8,7 @@ router.post('/register', handleRegister);
 router.post('/login', handleLogin);
 router.post('/google', handleGoogle);
 router.post('/forgot-password', handleForgotPassword);
+router.post('/change-password', handleChangePassword);
 
 // Issue ephemeral client secret for OpenAI Realtime API (browser WebRTC)
 // Note: This endpoint is kept for backward compatibility

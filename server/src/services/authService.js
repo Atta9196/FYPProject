@@ -148,6 +148,58 @@ async function sendPasswordReset({ email }) {
 	return { success: true, message: 'Password reset email sent. Check your inbox and spam folder.' };
 }
 
+async function changePassword({ email, currentPassword, newPassword }) {
+	const trimmed = (email || '').trim().toLowerCase();
+	if (!trimmed || !currentPassword || !newPassword) {
+		const err = new Error('Email, current password, and new password are required.');
+		err.status = 400;
+		throw err;
+	}
+	if (newPassword.length < 6) {
+		const err = new Error('New password must be at least 6 characters.');
+		err.status = 400;
+		throw err;
+	}
+
+	const apiKey = process.env.FIREBASE_WEB_API_KEY;
+	if (!apiKey) {
+		const err = new Error('Server configuration error.');
+		err.status = 500;
+		throw err;
+	}
+
+	const signInRes = await fetch(
+		`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				email: trimmed,
+				password: currentPassword,
+				returnSecureToken: true,
+			}),
+		}
+	);
+
+	if (!signInRes.ok) {
+		const errorData = await signInRes.json().catch(() => ({}));
+		const message = errorData?.error?.message || 'Invalid credentials';
+		if (message.includes('INVALID_LOGIN_CREDENTIALS') || message.includes('EMAIL_NOT_FOUND') || message.includes('INVALID_PASSWORD')) {
+			const err = new Error('Current password is incorrect.');
+			err.status = 401;
+			throw err;
+		}
+		const err = new Error(message);
+		err.status = 401;
+		throw err;
+	}
+
+	const signInData = await signInRes.json();
+	const uid = signInData.localId;
+	await auth.updateUser(uid, { password: newPassword });
+	return { success: true, message: 'Password updated successfully.' };
+}
+
 function sanitizeUser(userRecord, profile = {}) {
 	return {
 		uid: userRecord.uid,
@@ -161,8 +213,9 @@ function sanitizeUser(userRecord, profile = {}) {
 module.exports = {
 	registerUser,
 	loginUser,
-    verifyGoogleIdToken,
-    sendPasswordReset,
+	verifyGoogleIdToken,
+	sendPasswordReset,
+	changePassword,
 };
 
 

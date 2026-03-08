@@ -45,3 +45,7 @@
 html {
   scroll-behavior: smooth;
 }
+
+html.dark {
+  color-scheme: dark;
+}
