@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadGooglePlatformScript, renderGoogleButton, signInWithGoogleAndGetIdToken } from '../../services/firebase/googleAuth';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
 export default function LoginForm() {
-    const { login, loginWithGoogle, forgotPassword } = useAuth();
+    const { login, loginWithGoogle } = useAuth();
     const navigate = useNavigate();
     const [form, setForm] = useState({ email: '', password: '' });
     const [error, setError] = useState('');
@@ -49,57 +49,6 @@ export default function LoginForm() {
 			});
 		});
 	}, []);
-
-    function ForgotPasswordLink() {
-        const [open, setOpen] = useState(false);
-        const [email, setEmail] = useState('');
-        const [sending, setSending] = useState(false);
-        const [msg, setMsg] = useState('');
-        async function submitReset(e) {
-            e.preventDefault();
-            setMsg('');
-            setSending(true);
-            try {
-                const targetEmail = (email || form.email).trim();
-                if (!targetEmail) throw new Error('Email is required');
-                await forgotPassword(targetEmail);
-                setMsg('Password reset email sent.');
-            } catch (e) {
-                setMsg(e.message || 'Could not send reset email');
-            } finally {
-                setSending(false);
-            }
-        }
-        return (
-            <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                    <button type="button" onClick={() => setOpen((v) => !v)} className="text-sm text-blue-600 hover:underline">
-                        {open ? 'Hide reset form' : 'Forgot password?'}
-                    </button>
-                    {msg && <p className="text-xs text-gray-500">{msg}</p>}
-                </div>
-                {open && (
-                    <form onSubmit={submitReset} className="grid grid-cols-1 gap-2 p-3 border rounded-lg bg-gray-50">
-                        <label className="text-xs text-gray-600">Email for reset link</label>
-                        <input
-                            type="email"
-                            placeholder="you@example.com"
-                            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                        />
-                        <button
-                            type="submit"
-                            disabled={sending}
-                            className="justify-self-end px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-60"
-                        >
-                            {sending ? 'Sending…' : 'Send reset link'}
-                </button>
-                    </form>
-                )}
-            </div>
-        );
-    }
 
     return (
         <div className="max-w-md w-full bg-white/90 backdrop-blur-xl border border-purple-200/50 shadow-2xl rounded-3xl p-8 animate-fade-in">
@@ -151,7 +100,11 @@ export default function LoginForm() {
                         </button>
                     </div>
                 </div>
-                <ForgotPasswordLink />
+                <div className="flex justify-end">
+                    <Link to="/forgot-password" className="text-sm text-purple-600 hover:text-purple-700 hover:underline">
+                        Forgot password?
+                    </Link>
+                </div>
                 <button 
                     type="submit" 
                     disabled={submitting} 

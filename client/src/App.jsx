@@ -26,6 +26,7 @@ import ServicesPage from "./pages/ServicesPage";
 import ContactPage from "./pages/ContactPage";
 import LoginPage from "./pages/login";
 import RegisterPage from "./pages/register";
+import ForgotPassword from "./pages/ForgotPassword";
 
 // Components
 import { Navbar, Footer, ProtectedRoute } from "./components";
@@ -55,6 +56,14 @@ function App() {
                   element={
                     <ProtectedRoute requireAuth={false}>
                       <RegisterPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/forgot-password"
+                  element={
+                    <ProtectedRoute requireAuth={false}>
+                      <ForgotPassword />
                     </ProtectedRoute>
                   }
                 />
