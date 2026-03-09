@@ -78,14 +78,15 @@ export function PerformanceDashboardView() {
         }
     });
 
-    // Load performance data
-    const loadPerformanceData = () => {
+    // Load performance data (timeframe passed in so it's always current when effect runs)
+    const loadPerformanceData = (timeframe) => {
+        const range = timeframe ?? selectedTimeframe;
         try {
             const userId = user?.email || user?.id || null;
-            const bandProgress = getBandProgress(selectedTimeframe, userId);
-            const weeklyTests = getWeeklyTests(userId);
+            const bandProgress = getBandProgress(range, userId);
+            const weeklyTests = getWeeklyTests(range, userId);
             const moduleBreakdown = getModuleBreakdown(userId);
-            const practiceHistory = getPracticeHistory(20, userId);
+            const practiceHistory = getPracticeHistory(20, range, userId);
 
             // Calculate monthly goal progress
             const allProgress = getAllProgressData(userId);
@@ -176,16 +177,16 @@ export function PerformanceDashboardView() {
 
     // Load data on mount and when timeframe changes
     useEffect(() => {
-        loadPerformanceData();
+        loadPerformanceData(selectedTimeframe);
 
         // Set up real-time updates
         const interval = setInterval(() => {
-            loadPerformanceData();
+            loadPerformanceData(selectedTimeframe);
         }, 5000);
 
         // Listen for progress updates
         const handleProgressUpdate = () => {
-            loadPerformanceData();
+            loadPerformanceData(selectedTimeframe);
         };
         window.addEventListener('progressUpdated', handleProgressUpdate);
 
@@ -193,7 +194,7 @@ export function PerformanceDashboardView() {
             clearInterval(interval);
             window.removeEventListener('progressUpdated', handleProgressUpdate);
         };
-    }, [selectedTimeframe]);
+    }, [selectedTimeframe, user]);
 
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
 
@@ -240,6 +241,7 @@ export function PerformanceDashboardView() {
                                 {['1month', '3months', '6months', '1year'].map((timeframe) => (
                                     <button
                                         key={timeframe}
+                                        type="button"
                                         onClick={() => setSelectedTimeframe(timeframe)}
                                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                                             selectedTimeframe === timeframe

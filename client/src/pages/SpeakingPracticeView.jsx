@@ -30,7 +30,7 @@ function saveHistory(entries, userId) {
     window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
-export function SpeakingPracticeView({ embedded = false }) {
+export function SpeakingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     // Mode selection state
     const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
@@ -63,6 +63,11 @@ export function SpeakingPracticeView({ embedded = false }) {
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const conversationEndRef = useRef(null);
+
+    // When embedded (e.g. Full Test Simulator), signal ready so the parent can start the timer
+    useEffect(() => {
+        if (embedded && typeof onReady === "function") onReady();
+    }, [embedded, onReady]);
 
     // Auto-scroll to bottom of conversation
     useEffect(() => {
@@ -163,30 +168,33 @@ export function SpeakingPracticeView({ embedded = false }) {
             const data = await response.json();
             
             if (data.success) {
-                setTranscript(data.transcript);
-                setEvaluation(data.feedback);
-
-                // Save to localStorage for progress tracking
-                const historyEntry = {
-                    id: Date.now(),
-                    question: currentQuestion,
-                    transcript: data.transcript,
-                    feedback: data.feedback,
-                    bandScore: parseFloat(data.feedback?.bandScore?.replace(/[^0-9.]/g, '') || 0),
-                    submittedAt: new Date().toISOString(),
-                    type: 'recorded_practice'
-                };
-
-                const userId = user?.email || user?.id || null;
-                const existingHistory = loadHistory(userId);
-                const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                saveHistory(updatedHistory, userId);
-
-                // Dispatch event to update dashboards in real-time
-                window.dispatchEvent(new Event('progressUpdated'));
+                setTranscript(data.transcript || '');
+                if (data.noSpeech) {
+                    setEvaluation({ _noSpeech: true, message: data.message || 'No speech detected. Please record your response and try again.' });
+                } else {
+                    setEvaluation(data.feedback);
+                    // Save to localStorage only when we have AI evaluation (no static band)
+                    const bandScore = typeof data.bandScore === 'number' && !Number.isNaN(data.bandScore)
+                        ? data.bandScore
+                        : parseFloat(String(data.feedback?.bandScore || '0').replace(/[^0-9.]/g, ''), 10) || 0;
+                    const historyEntry = {
+                        id: Date.now(),
+                        question: currentQuestion,
+                        transcript: data.transcript,
+                        feedback: data.feedback,
+                        bandScore,
+                        submittedAt: new Date().toISOString(),
+                        type: 'recorded_practice'
+                    };
+                    const userId = user?.email || user?.id || null;
+                    const existingHistory = loadHistory(userId);
+                    const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+                    saveHistory(updatedHistory, userId);
+                    window.dispatchEvent(new Event('progressUpdated'));
+                }
             } else {
                 console.error('Evaluation failed:', data.error);
-                alert('Failed to evaluate your response. Please try again.');
+                alert(data.error || 'Failed to evaluate your response. Please try again.');
             }
         } catch (error) {
             console.error('Error evaluating audio:', error);
@@ -723,40 +731,53 @@ export function SpeakingPracticeView({ embedded = false }) {
                                             </div>
                                         )}
                                         
-                                        {/* AI Evaluation */}
-                            <div className="bg-gradient-to-br from-green-50 to-blue-50 rounded-xl border border-slate-200 p-5 shadow-sm">
-                                <div className="flex items-start gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                                        <span className="text-blue-600 text-lg">🤖</span>
+                                        {/* No speech: message only (no band, no static evaluation) */}
+                                        {evaluation._noSpeech ? (
+                                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm">
+                                                <div className="flex items-start gap-3">
+                                                    <span className="text-2xl">🎤</span>
+                                                    <div>
+                                                        <h4 className="text-sm font-semibold text-amber-800 mb-1">No speech detected</h4>
+                                                        <p className="text-sm text-amber-700">{evaluation.message}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            /* AI Evaluation (only when we have real AI feedback) */
+                                            <div className="bg-gradient-to-br from-green-50 to-blue-50 rounded-xl border border-slate-200 p-5 shadow-sm">
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                                        <span className="text-blue-600 text-lg">🤖</span>
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <h4 className="text-sm font-semibold text-slate-800 mb-3">AI Evaluation:</h4>
+                                                        <div className="space-y-3">
+                                                            <div className="flex items-start gap-2">
+                                                                <span className="text-xs font-semibold text-slate-600 w-20">Fluency:</span>
+                                                                <span className="text-xs text-slate-700">{evaluation.fluency}</span>
+                                                            </div>
+                                                            <div className="flex items-start gap-2">
+                                                                <span className="text-xs font-semibold text-slate-600 w-20">Lexical:</span>
+                                                                <span className="text-xs text-slate-700">{evaluation.lexical}</span>
+                                                            </div>
+                                                            <div className="flex items-start gap-2">
+                                                                <span className="text-xs font-semibold text-slate-600 w-20">Grammar:</span>
+                                                                <span className="text-xs text-slate-700">{evaluation.grammar}</span>
+                                                            </div>
+                                                            <div className="flex items-start gap-2">
+                                                                <span className="text-xs font-semibold text-slate-600 w-20">Pronunciation:</span>
+                                                                <span className="text-xs text-slate-700">{evaluation.pronunciation}</span>
+                                                            </div>
+                                                            <div className="flex items-start gap-2">
+                                                                <span className="text-xs font-semibold text-slate-600 w-20">Band Score:</span>
+                                                                <span className="text-xs font-semibold text-blue-700">{evaluation.bandScore}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="flex-1">
-                                                    <h4 className="text-sm font-semibold text-slate-800 mb-3">AI Evaluation:</h4>
-                                                    <div className="space-y-3">
-                                                        <div className="flex items-start gap-2">
-                                                            <span className="text-xs font-semibold text-slate-600 w-20">Fluency:</span>
-                                                            <span className="text-xs text-slate-700">{evaluation.fluency}</span>
-                                                        </div>
-                                                        <div className="flex items-start gap-2">
-                                                            <span className="text-xs font-semibold text-slate-600 w-20">Lexical:</span>
-                                                            <span className="text-xs text-slate-700">{evaluation.lexical}</span>
-                                                        </div>
-                                                        <div className="flex items-start gap-2">
-                                                            <span className="text-xs font-semibold text-slate-600 w-20">Grammar:</span>
-                                                            <span className="text-xs text-slate-700">{evaluation.grammar}</span>
-                                                        </div>
-                                                        <div className="flex items-start gap-2">
-                                                            <span className="text-xs font-semibold text-slate-600 w-20">Pronunciation:</span>
-                                                            <span className="text-xs text-slate-700">{evaluation.pronunciation}</span>
-                                                        </div>
-                                                        <div className="flex items-start gap-2">
-                                                            <span className="text-xs font-semibold text-slate-600 w-20">Band Score:</span>
-                                                            <span className="text-xs font-semibold text-blue-700">{evaluation.bandScore}</span>
-                                                        </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                                 ) : (
                                     <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-xl border border-slate-200 p-5 shadow-sm">
                                         <div className="text-center">

@@ -97,7 +97,7 @@ function formatSeconds(totalSeconds) {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-export function WritingPracticeView({ embedded = false }) {
+export function WritingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     const [activeTaskId, setActiveTaskId] = useState("task1-academic");
     const [currentPrompt, setCurrentPrompt] = useState(() => getRandomPrompt("task1-academic"));
@@ -119,6 +119,11 @@ export function WritingPracticeView({ embedded = false }) {
     const config = writingTaskConfigs[activeTaskId];
 
     const wordCount = useMemo(() => countWords(responseText), [responseText]);
+
+    // When embedded (e.g. Full Test Simulator), signal ready so the parent can start the timer
+    useEffect(() => {
+        if (embedded && typeof onReady === "function") onReady();
+    }, [embedded, onReady]);
 
     // Reload history when user changes
     useEffect(() => {

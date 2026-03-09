@@ -256,100 +256,88 @@ router.post("/evaluate", upload.single("audio"), async (req, res) => {
       language: "en"
     });
 
-    const transcript = transcription.text;
-    console.log("📝 Transcript:", transcript);
+    const transcript = (transcription.text || "").trim();
+    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+    console.log("📝 Transcript:", transcript, "| words:", wordCount);
 
-    // Step 2: Evaluate the response using GPT with comprehensive IELTS assessment
-    console.log("🤖 Evaluating response with GPT...");
-    
-    // Fallback evaluation function
-    const getFallbackEvaluation = (transcript) => {
-      const wordCount = transcript.split(' ').length;
-      const sentenceCount = transcript.split(/[.!?]+/).filter(s => s.trim().length > 0).length;
-      const avgWordsPerSentence = wordCount / sentenceCount;
-      
-      let fluencyScore, lexicalScore, grammarScore, pronunciationScore, bandScore;
-      
-      // Simple scoring based on transcript length and complexity
-      if (wordCount >= 100) {
-        fluencyScore = "8/10 - Good fluency with natural pace";
-        lexicalScore = "7/10 - Good vocabulary range";
-        grammarScore = "7/10 - Generally accurate grammar";
-        pronunciationScore = "7/10 - Clear pronunciation";
-        bandScore = "7.0";
-      } else if (wordCount >= 50) {
-        fluencyScore = "6/10 - Adequate fluency with some hesitation";
-        lexicalScore = "6/10 - Adequate vocabulary range";
-        grammarScore = "6/10 - Some grammatical errors but generally clear";
-        pronunciationScore = "6/10 - Mostly clear pronunciation";
-        bandScore = "6.0";
-      } else {
-        fluencyScore = "5/10 - Limited fluency with frequent hesitation";
-        lexicalScore = "5/10 - Limited vocabulary range";
-        grammarScore = "5/10 - Several grammatical errors";
-        pronunciationScore = "5/10 - Some pronunciation issues";
-        bandScore = "5.5";
-      }
-      
-      return {
-        fluency: fluencyScore,
-        lexical: lexicalScore,
-        grammar: grammarScore,
-        pronunciation: pronunciationScore,
-        bandScore: bandScore
-      };
-    };
-    
+    const question = (req.body && req.body.question) ? String(req.body.question).trim() : "";
+
+    // No speech: do not call AI and do not assign any band (no static evaluation)
+    if (wordCount === 0 || transcript.length < 2) {
+      fs.unlink(audioFilePath, (err) => { if (err) console.error("⚠️ Error deleting file:", err); });
+      return res.status(200).json({
+        transcript: transcript || "(no speech detected)",
+        success: true,
+        noSpeech: true,
+        message: "No speech detected. Please record your response and try again.",
+        feedback: null,
+        bandScore: null
+      });
+    }
+
+    // Step 2: Evaluate with AI only (no static/fallback band)
+    console.log("🤖 Evaluating response with GPT (AI-only, no static evaluation)...");
+
     let feedback;
-    
+
     try {
-      // Use gpt-4o for evaluations - more accurate feedback worth the extra cost
       const evaluation = await openai.chat.completions.create({
-        model: "gpt-4o", // More accurate for evaluations
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
-            content: `IELTS examiner. Evaluate response by:
-1. FLUENCY (25%): pace, hesitation, flow
-2. LEXICAL (25%): vocabulary range, word choice
-3. GRAMMAR (25%): sentence variety, accuracy
-4. PRONUNCIATION (25%): clarity, stress, intonation
+            content: `You are an IELTS Speaking examiner. Evaluate the candidate's response using ONLY the transcript and the question. Be strict and accurate.
 
-Format:
-FLUENCY: [score/10] - [comment]
-LEXICAL: [score/10] - [comment]
-GRAMMAR: [score/10] - [comment]
-PRONUNCIATION: [score/10] - [comment]
-BAND SCORE: [6.0-9.0]`
+RULES:
+1. Score each criterion out of 10 based on what was actually said:
+   - FLUENCY: pace, hesitation, coherence
+   - LEXICAL: vocabulary range, word choice
+   - GRAMMAR: accuracy, sentence variety
+   - PRONUNCIATION: clarity
+2. If the response is very short or does not address the question, give low scores (1-4/10) and a low band (2.0-4.0) and explain why.
+3. BAND SCORE must be a single number from 1.0 to 9.0 in 0.5 steps.
+
+Output format (use exactly these labels):
+FLUENCY: [score/10] - [brief comment]
+LEXICAL: [score/10] - [brief comment]
+GRAMMAR: [score/10] - [brief comment]
+PRONUNCIATION: [score/10] - [brief comment]
+BAND SCORE: [number e.g. 3.0 or 7.5]`
           },
           {
             role: "user",
-            content: `Evaluate: "${transcript}"`
+            content: question
+              ? `Question: ${question}\n\nCandidate's transcript: "${transcript}"\n\nEvaluate the response.`
+              : `Candidate's transcript: "${transcript}"\n\nEvaluate the response.`
           }
         ],
-        max_tokens: 400, // Reduced from 500 - still comprehensive
-        temperature: 0.2 // Lower for more consistent evaluations
+        max_tokens: 450,
+        temperature: 0.2
       });
 
       const feedbackText = evaluation.choices[0].message.content.trim();
-      console.log("📊 Evaluation feedback:", feedbackText);
+      console.log("📊 AI evaluation feedback:", feedbackText);
 
-      // Parse the feedback into structured format
       const lines = feedbackText.split('\n').filter(line => line.trim());
+      const bandRaw = lines.find(line => line.startsWith('BAND SCORE:'))?.replace(/BAND SCORE:\s*/i, '').trim() || "";
+      const bandNum = parseFloat(bandRaw.replace(/[^0-9.]/g, ''), 10);
+      const bandScore = !Number.isNaN(bandNum) && bandNum >= 1 && bandNum <= 9 ? bandNum.toFixed(1) : bandRaw || "0";
+
       feedback = {
-        fluency: lines.find(line => line.startsWith('FLUENCY:'))?.replace('FLUENCY:', '').trim() || "No fluency feedback",
-        lexical: lines.find(line => line.startsWith('LEXICAL:'))?.replace('LEXICAL:', '').trim() || "No lexical feedback",
-        grammar: lines.find(line => line.startsWith('GRAMMAR:'))?.replace('GRAMMAR:', '').trim() || "No grammar feedback",
-        pronunciation: lines.find(line => line.startsWith('PRONUNCIATION:'))?.replace('PRONUNCIATION:', '').trim() || "No pronunciation feedback",
-        bandScore: lines.find(line => line.startsWith('BAND SCORE:'))?.replace('BAND SCORE:', '').trim() || "No band score"
+        fluency: lines.find(line => line.startsWith('FLUENCY:'))?.replace(/FLUENCY:\s*/i, '').trim() || "No fluency feedback",
+        lexical: lines.find(line => line.startsWith('LEXICAL:'))?.replace(/LEXICAL:\s*/i, '').trim() || "No lexical feedback",
+        grammar: lines.find(line => line.startsWith('GRAMMAR:'))?.replace(/GRAMMAR:\s*/i, '').trim() || "No grammar feedback",
+        pronunciation: lines.find(line => line.startsWith('PRONUNCIATION:'))?.replace(/PRONUNCIATION:\s*/i, '').trim() || "No pronunciation feedback",
+        bandScore
       };
-      
     } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for evaluation, using fallback:", openaiError.message);
-      
-      // Use fallback evaluation
-      feedback = getFallbackEvaluation(transcript);
-      console.log("📊 Fallback evaluation:", feedback);
+      console.error("⚠️ OpenAI API failed for evaluation (no static fallback):", openaiError.message);
+      fs.unlink(audioFilePath, (err) => { if (err) console.error("⚠️ Error deleting file:", err); });
+      return res.status(503).json({
+        success: false,
+        error: "AI evaluation is temporarily unavailable. Please try again.",
+        noSpeech: false
+      });
     }
 
     // Clean up the uploaded file
@@ -377,11 +365,16 @@ BAND SCORE: [6.0-9.0]`
       }
     }
     
+    const numericBand = typeof feedback.bandScore === "number"
+      ? feedback.bandScore
+      : parseFloat(String(feedback.bandScore || "0").replace(/[^0-9.]/g, ""), 10) || 0;
+
     console.log("✅ Evaluation completed successfully");
     
     res.json({
       transcript: transcript,
       feedback: feedback,
+      bandScore: Number.isNaN(numericBand) ? 0 : Math.min(9, Math.max(0, numericBand)),
       success: true
     });
 

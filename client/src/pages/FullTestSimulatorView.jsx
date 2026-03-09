@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import { useNavigate } from "react-router-dom";
@@ -78,6 +78,8 @@ export function FullTestSimulatorView() {
     // Module order
     const moduleOrder = ['listening', 'reading', 'writing', 'speaking'];
     const currentModuleIndex = currentModule ? moduleOrder.indexOf(currentModule) : -1;
+    const testCompletedRef = useRef(false);
+    const [currentModuleReady, setCurrentModuleReady] = useState(false);
     
     // Format time helper
     const formatTime = (seconds) => {
@@ -92,6 +94,8 @@ export function FullTestSimulatorView() {
     
     // Start test
     const handleStartTest = useCallback(() => {
+        testCompletedRef.current = false;
+        setCurrentModuleReady(false);
         setTestStarted(true);
         setCurrentModule('listening');
         setOverallTimer(TOTAL_TEST_TIME);
@@ -109,71 +113,74 @@ export function FullTestSimulatorView() {
         });
     }, []);
     
-    // Complete module
-    const handleModuleComplete = useCallback((module, results) => {
-        setModuleStatus(prev => ({
-            ...prev,
-            [module]: {
-                completed: true,
-                score: results.score || results.correctCount || 0,
-                band: results.band || 0
-            }
-        }));
-        
-        // Move to next module
-        const nextIndex = moduleOrder.indexOf(module) + 1;
-        if (nextIndex < moduleOrder.length) {
-            setCurrentModule(moduleOrder[nextIndex]);
-        } else {
-            // All modules completed
-            handleTestComplete();
-        }
-    }, []);
-    
-    // Complete test
-    const handleTestComplete = useCallback(() => {
+    // Complete test (optional override = status to use when e.g. last module just completed)
+    const handleTestComplete = useCallback((overrideModuleStatus = null) => {
+        if (testCompletedRef.current) return;
+        testCompletedRef.current = true;
+
+        const statusToUse = overrideModuleStatus != null ? overrideModuleStatus : moduleStatus;
         setTestCompleted(true);
         setTestStarted(false);
         setCurrentModule(null);
-        
-        // Calculate overall band (average of all modules)
-        const bands = Object.values(moduleStatus)
+
+        const bands = Object.values(statusToUse)
             .map(m => m.band)
             .filter(b => b !== null && b > 0);
-        
+
         const overallBand = bands.length > 0
             ? (bands.reduce((sum, b) => sum + parseFloat(b), 0) / bands.length).toFixed(1)
             : 0;
-        
-        // Save to history
+
         const userId = user?.email || user?.id || null;
         const historyEntry = {
             id: Date.now(),
             completedAt: new Date().toISOString(),
-            modules: moduleStatus,
+            modules: statusToUse,
             overallBand: parseFloat(overallBand),
             totalTime: TOTAL_TEST_TIME - overallTimer
         };
-        
+
         const existingHistory = loadHistory(userId);
         const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
         saveHistory(updatedHistory, userId);
-        
-        // Dispatch event to update dashboards
+
         window.dispatchEvent(new Event('progressUpdated'));
-    }, [moduleStatus, overallTimer]);
+    }, [moduleStatus, overallTimer, user]);
+
+    // Complete module
+    const handleModuleComplete = useCallback((module, results) => {
+        const nextIndex = moduleOrder.indexOf(module) + 1;
+        const updatedStatus = {
+            completed: true,
+            score: results.score ?? results.correctCount ?? 0,
+            band: results.band ?? 0
+        };
+
+        setModuleStatus(prev => {
+            const next = { ...prev, [module]: updatedStatus };
+            if (nextIndex >= moduleOrder.length) {
+                handleTestComplete(next);
+            }
+            return next;
+        });
+
+        if (nextIndex < moduleOrder.length) {
+            setCurrentModuleReady(false);
+            setCurrentModule(moduleOrder[nextIndex]);
+        }
+    }, [handleTestComplete]);
     
-    // Timer effect
+    // Timer effect – only run when current module has finished loading (so time isn’t lost during generation)
     useEffect(() => {
-        if (!testStarted || testCompleted) return;
+        if (!testStarted || testCompleted || !currentModuleReady) return;
         
         const interval = setInterval(() => {
             setOverallTimer(prev => {
-                if (prev <= 1) {
+                if (prev <= 1 && !testCompletedRef.current) {
                     handleTestComplete();
                     return 0;
                 }
-                return prev - 1;
+                return prev <= 1 ? 0 : prev - 1;
             });
             
             if (currentModule) {
@@ -185,7 +192,7 @@ export function FullTestSimulatorView() {
         }, 1000);
         
         return () => clearInterval(interval);
-    }, [testStarted, testCompleted, currentModule, handleTestComplete]);
+    }, [testStarted, testCompleted, currentModule, currentModuleReady, handleTestComplete]);
     
     // Listen for module completion events
     useEffect(() => {
@@ -364,6 +371,7 @@ export function FullTestSimulatorView() {
                         <div className="flex gap-4">
                             <button
                                 onClick={() => {
+                                    testCompletedRef.current = false;
                                     setTestCompleted(false);
                                     setTestStarted(false);
                                     setCurrentModule(null);
@@ -426,6 +434,9 @@ export function FullTestSimulatorView() {
                                 <div className="text-right">
                                     <p className="text-xs text-slate-500 capitalize">{currentModule} Time</p>
                                     <p className="text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
+                                    {!currentModuleReady && (
+                                        <p className="text-xs text-amber-600 mt-0.5">Timer starts when test is ready</p>
+                                    )}
                                 </div>
                             )}
                             <button
@@ -465,6 +476,7 @@ export function FullTestSimulatorView() {
                                 detail: { module: 'listening', results }
                             }));
                         }}
+                        onReady={() => setCurrentModuleReady(true)}
                     />
                 )}
                 {currentModule === 'reading' && (
@@ -474,6 +486,7 @@ export function FullTestSimulatorView() {
                                 detail: { module: 'reading', results }
                             }));
                         }}
+                        onReady={() => setCurrentModuleReady(true)}
                     />
                 )}
                 {currentModule === 'writing' && (
@@ -483,6 +496,7 @@ export function FullTestSimulatorView() {
                                 detail: { module: 'writing', results }
                             }));
                         }}
+                        onReady={() => setCurrentModuleReady(true)}
                     />
                 )}
                 {currentModule === 'speaking' && (
@@ -492,6 +506,7 @@ export function FullTestSimulatorView() {
                                 detail: { module: 'speaking', results }
                             }));
                         }}
+                        onReady={() => setCurrentModuleReady(true)}
                     />
                 )}
             </div>
@@ -500,7 +515,7 @@ export function FullTestSimulatorView() {
 }
 
 // Wrapper components to integrate module views
-function ListeningTestWrapper({ onComplete }) {
+function ListeningTestWrapper({ onComplete, onReady }) {
     const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
@@ -551,10 +566,10 @@ function ListeningTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed, user]);
     
-    return <ListeningPracticeView embedded={true} />;
+    return <ListeningPracticeView embedded={true} onReady={onReady} />;
 }
 
-function ReadingTestWrapper({ onComplete }) {
+function ReadingTestWrapper({ onComplete, onReady }) {
     const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
@@ -603,10 +618,10 @@ function ReadingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed, user]);
     
-    return <ReadingPracticeView embedded={true} />;
+    return <ReadingPracticeView embedded={true} onReady={onReady} />;
 }
 
-function WritingTestWrapper({ onComplete }) {
+function WritingTestWrapper({ onComplete, onReady }) {
     const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
@@ -655,10 +670,10 @@ function WritingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed, user]);
     
-    return <WritingPracticeView embedded={true} />;
+    return <WritingPracticeView embedded={true} onReady={onReady} />;
 }
 
-function SpeakingTestWrapper({ onComplete }) {
+function SpeakingTestWrapper({ onComplete, onReady }) {
     const { user } = useAuth();
     const [completed, setCompleted] = useState(false);
     
@@ -707,5 +722,5 @@ function SpeakingTestWrapper({ onComplete }) {
         };
     }, [onComplete, completed, user]);
     
-    return <SpeakingPracticeView embedded={true} />;
+    return <SpeakingPracticeView embedded={true} onReady={onReady} />;
 }

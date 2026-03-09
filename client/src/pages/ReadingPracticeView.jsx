@@ -300,7 +300,7 @@ function HighlightList({ highlights, onUpdateNote, onRemove }) {
     );
 }
 
-export function ReadingPracticeView({ embedded = false }) {
+export function ReadingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     const [availableSets, setAvailableSets] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -355,6 +355,7 @@ export function ReadingPracticeView({ embedded = false }) {
                 setSubmitting(false);
                 setResults(null);
                 setHighlights([]);
+                if (embedded && typeof onReady === "function") onReady();
             } else {
                 throw new Error(data.error || "Failed to generate reading test");
             }
@@ -365,7 +366,7 @@ export function ReadingPracticeView({ embedded = false }) {
             setGenerating(false);
             setLoading(false);
         }
-    }, []);
+    }, [embedded, onReady]);
 
     // Load initial reading test on mount
     useEffect(() => {

@@ -201,7 +201,7 @@ const phaseLabels = {
     completed: "Completed"
 };
 
-export function ListeningPracticeView({ embedded = false }) {
+export function ListeningPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     const [listeningSections, setListeningSections] = useState([]);
     const [totalListeningQuestions, setTotalListeningQuestions] = useState(40);
@@ -241,8 +241,7 @@ export function ListeningPracticeView({ embedded = false }) {
                 if (sections.length > 0) {
                     setActiveSectionId(sections[0].id);
                 }
-                
-                // Reset test state - these don't exist in this component, removing
+                if (embedded && typeof onReady === "function") onReady();
             } else {
                 throw new Error(data.error || "Failed to generate listening test");
             }
@@ -253,7 +252,7 @@ export function ListeningPracticeView({ embedded = false }) {
             setGenerating(false);
             setLoading(false);
         }
-    }, [apiBase]);
+    }, [apiBase, embedded, onReady]);
 
     // Load initial listening test on mount
     useEffect(() => {

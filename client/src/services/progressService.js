@@ -394,8 +394,10 @@ export function getBandProgress(timeframe = '3months', userId = null) {
         ...progress.listening.map(e => ({ ...e, module: 'listening' })),
         ...progress.speaking.map(e => ({ ...e, module: 'speaking', band: e.bandScore || 0 }))
     ].filter(e => {
-        const entryDate = new Date(e.submittedAt);
-        return entryDate >= startDate;
+        const submittedAt = e.submittedAt || e.completedAt || e.date;
+        if (!submittedAt) return false;
+        const entryDate = new Date(submittedAt);
+        return !isNaN(entryDate.getTime()) && entryDate >= startDate;
     }).sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
 
     // Group by month
@@ -460,32 +462,69 @@ export function getBandProgress(timeframe = '3months', userId = null) {
 }
 
 /**
- * Get weekly test completion data
+ * Get start date for a timeframe (same logic as getBandProgress)
  */
-export function getWeeklyTests(userId = null) {
+function getStartDateForTimeframe(timeframe) {
+    const now = new Date();
+    const startDate = new Date(now);
+    switch (timeframe) {
+        case '1month':
+            startDate.setMonth(now.getMonth() - 1);
+            break;
+        case '3months':
+            startDate.setMonth(now.getMonth() - 3);
+            break;
+        case '6months':
+            startDate.setMonth(now.getMonth() - 6);
+            break;
+        case '1year':
+            startDate.setFullYear(now.getFullYear() - 1);
+            break;
+        default:
+            startDate.setMonth(now.getMonth() - 3);
+    }
+    startDate.setHours(0, 0, 0, 0);
+    return startDate;
+}
+
+/**
+ * Get weekly test completion data (optionally filtered by timeframe)
+ */
+export function getWeeklyTests(userId = null, timeframe = null) {
     const progress = getAllProgressData(userId);
-    const allEntries = [
+    let allEntries = [
         ...progress.reading,
         ...progress.writing,
         ...progress.listening,
         ...progress.speaking
     ];
 
+    if (timeframe) {
+        const startDate = getStartDateForTimeframe(timeframe);
+        allEntries = allEntries.filter(entry => {
+            const submittedAt = entry.submittedAt || entry.completedAt || entry.date;
+            if (!submittedAt) return false;
+            const entryDate = new Date(submittedAt);
+            return !isNaN(entryDate.getTime()) && entryDate >= startDate;
+        });
+    }
+
     const now = new Date();
     const weeks = [];
-    
-    // Get last 6 weeks
+
     for (let i = 5; i >= 0; i--) {
         const weekStart = new Date(now);
         weekStart.setDate(weekStart.getDate() - (i * 7));
         weekStart.setHours(0, 0, 0, 0);
-        
+
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekEnd.getDate() + 7);
 
         const weekTests = allEntries.filter(entry => {
-            const entryDate = new Date(entry.submittedAt);
-            return entryDate >= weekStart && entryDate < weekEnd;
+            const submittedAt = entry.submittedAt || entry.completedAt || entry.date;
+            if (!submittedAt) return false;
+            const entryDate = new Date(submittedAt);
+            return !isNaN(entryDate.getTime()) && entryDate >= weekStart && entryDate < weekEnd;
         }).length;
 
         weeks.push({
@@ -583,14 +622,35 @@ export function getModuleBreakdown(userId = null) {
 }
 
 /**
- * Get practice history for table
+ * Get practice history for table (optionally filtered by timeframe)
+ * Signature: getPracticeHistory(limit, timeframe, userId) or getPracticeHistory(limit, userId) for no timeframe
  */
-export function getPracticeHistory(limit = 20, userId = null) {
-    const progress = getAllProgressData(userId);
+export function getPracticeHistory(limit = 20, timeframeOrUserId = null, userIdParam = null) {
+    let timeframe = null;
+    let uid = null;
+    if (typeof timeframeOrUserId === 'string' && (timeframeOrUserId === '1month' || timeframeOrUserId === '3months' || timeframeOrUserId === '6months' || timeframeOrUserId === '1year')) {
+        timeframe = timeframeOrUserId;
+        uid = userIdParam;
+    } else {
+        uid = timeframeOrUserId;
+    }
+
+    const progress = getAllProgressData(uid);
     const allEntries = [];
 
+    const pushEntry = (entry, row) => {
+        const date = entry.submittedAt || entry.completedAt || entry.date;
+        if (!date) return;
+        if (timeframe) {
+            const startDate = getStartDateForTimeframe(timeframe);
+            const entryDate = new Date(date);
+            if (isNaN(entryDate.getTime()) || entryDate < startDate) return;
+        }
+        allEntries.push({ ...row, date });
+    };
+
     progress.reading.forEach(entry => {
-        allEntries.push({
+        pushEntry(entry, {
             date: entry.submittedAt,
             type: 'Reading Test',
             band: parseFloat(entry.band || 0),
@@ -600,7 +660,7 @@ export function getPracticeHistory(limit = 20, userId = null) {
     });
 
     progress.writing.forEach(entry => {
-        allEntries.push({
+        pushEntry(entry, {
             date: entry.submittedAt,
             type: entry.taskId?.includes('task1') ? 'Writing Task 1' : 'Writing Task 2',
             band: parseFloat(entry.overallBand || 0),
@@ -610,7 +670,7 @@ export function getPracticeHistory(limit = 20, userId = null) {
     });
 
     progress.listening.forEach(entry => {
-        allEntries.push({
+        pushEntry(entry, {
             date: entry.submittedAt,
             type: 'Listening Test',
             band: parseFloat(entry.band || entry.bandScore || 0),
@@ -620,7 +680,7 @@ export function getPracticeHistory(limit = 20, userId = null) {
     });
 
     progress.speaking.forEach(entry => {
-        allEntries.push({
+        pushEntry(entry, {
             date: entry.submittedAt,
             type: entry.type === 'realtime_practice' ? 'Speaking Practice (Real-time)' : 'Speaking Practice',
             band: parseFloat(entry.bandScore || 0),
