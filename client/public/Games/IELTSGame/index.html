@@ -6,43 +6,10 @@
     <title>Unity WebGL Player | IELTSGames</title>
     <link rel="shortcut icon" href="TemplateData/favicon.ico">
     <link rel="stylesheet" href="TemplateData/style.css">
-
-
-
-    <style>
-      html, body {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background: black;
-      }
-    
-      #unity-container {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-      }
-    
-      #unity-canvas {
-        width: 100% !important;
-        height: 100% !important;
-        display: block;
-      }
-    
-      #unity-footer {
-        display: none; /* optional but recommended */
-      }
-    </style>
-    
-
-
   </head>
   <body>
     <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
+      <canvas id="unity-canvas" width=1280 height=720 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
         <div id="unity-logo"></div>
         <div id="unity-progress-bar-empty">
@@ -92,9 +59,9 @@
       var buildUrl = "Build";
       var loaderUrl = buildUrl + "/cee3bfd5589651a8b16e2a12b8abe5b3.loader.js";
       var config = {
-        dataUrl: buildUrl + "/74a2c7d25e454dd5dd8eb1c9db762e8b.data.unityweb",
-        frameworkUrl: buildUrl + "/57bda630fde03265df3fcabd6c301e3e.framework.js.unityweb",
-        codeUrl: buildUrl + "/bb369c0f9b2b874c33ef331573b0a590.wasm.unityweb",
+        dataUrl: buildUrl + "/9309ba5220743e4c80e992c1db677e46.data.unityweb",
+        frameworkUrl: buildUrl + "/61588bc99e0d2c8bbeb737e4cf406ca2.framework.js.unityweb",
+        codeUrl: buildUrl + "/d3c7b6da442b69f04fe616139ff7343d.wasm.unityweb",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "DefaultCompany",
         productName: "IELTSGames",
@@ -133,6 +100,11 @@
         // config.devicePixelRatio = 1;
 
 
+      } else {
+        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
+
+        canvas.style.width = "1280px";
+        canvas.style.height = "720px";
       }
 
       loadingBar.style.display = "block";
