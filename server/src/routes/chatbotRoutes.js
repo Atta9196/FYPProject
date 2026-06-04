@@ -34,25 +34,37 @@ router.post('/message', async (req, res) => {
       });
     }
 
-    // Build conversation context with system prompt
-    const systemPrompt = buildConversationContext(message, chatHistory);
+    // Build system instruction + multi-turn conversation contents
+    const systemInstruction = buildSystemInstruction();
+    const contents = buildContents(message, chatHistory);
+
+    // Decide how long the answer should be based on the user's question
+    const { maxOutputTokens, lengthHint } = decideAnswerBudget(message);
+
+    // Append a per-turn length hint to the latest user message so Gemini respects it
+    if (contents.length > 0) {
+      const last = contents[contents.length - 1];
+      if (last.role === 'user' && Array.isArray(last.parts) && last.parts[0]?.text) {
+        last.parts[0].text = `${last.parts[0].text}\n\n[Answer style: ${lengthHint}. Give ONLY the exact answer to this question. No greetings, no filler, no repeating the question.]`;
+      }
+    }
 
     // Call Gemini API - Using gemini-2.5-flash (tested and working)
     const modelName = 'gemini-2.5-flash';
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-    
+
     const requestBody = {
-      contents: [{
-        parts: [{
-          text: systemPrompt
-        }]
-      }],
+      systemInstruction: {
+        role: 'system',
+        parts: [{ text: systemInstruction }],
+      },
+      contents,
       generationConfig: {
-        temperature: 0.7,
+        temperature: 0.3,
         topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      }
+        topP: 0.9,
+        maxOutputTokens,
+      },
     };
 
     console.log(`📤 Sending message to Gemini API (${modelName})...`);
@@ -73,10 +85,11 @@ router.post('/message', async (req, res) => {
           return res.status(500).json({ error: 'Invalid API response format' });
         }
 
-        const botResponse = data.candidates[0].content.parts[0].text;
+        const rawResponse = data.candidates[0].content.parts[0].text || '';
+        const botResponse = cleanResponse(rawResponse);
         console.log(`✅ Gemini API response received (${modelName})`);
 
-        return res.json({ 
+        return res.json({
           response: botResponse,
           model: modelName
         });
@@ -115,23 +128,23 @@ router.post('/message', async (req, res) => {
 /**
  * Try fallback model if primary model fails
  */
-async function tryFallbackModel(apiKey, systemPrompt, res) {
+async function tryFallbackModel(apiKey, contents, res, maxOutputTokens = 220) {
   try {
     const fallbackModel = 'gemini-1.5-flash';
     const apiUrl = `https://generativelanguage.googleapis.com/v1/models/${fallbackModel}:generateContent?key=${apiKey}`;
-    
+
     const requestBody = {
-      contents: [{
-        parts: [{
-          text: systemPrompt
-        }]
-      }],
+      systemInstruction: {
+        role: 'system',
+        parts: [{ text: buildSystemInstruction() }],
+      },
+      contents,
       generationConfig: {
-        temperature: 0.7,
+        temperature: 0.3,
         topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      }
+        topP: 0.9,
+        maxOutputTokens,
+      },
     };
 
     console.log('📤 Trying fallback model:', fallbackModel);
@@ -156,10 +169,10 @@ async function tryFallbackModel(apiKey, systemPrompt, res) {
       return res.status(500).json({ error: 'Invalid API response format from fallback model' });
     }
 
-    const botResponse = data.candidates[0].content.parts[0].text;
+    const botResponse = cleanResponse(data.candidates[0].content.parts[0].text || '');
     console.log('✅ Fallback model response received');
 
-    res.json({ 
+    res.json({
       response: botResponse,
       model: fallbackModel
     });
@@ -173,94 +186,123 @@ async function tryFallbackModel(apiKey, systemPrompt, res) {
 }
 
 /**
- * Build conversation context with system prompt
+ * Concise, strict system instruction. Tells Gemini to answer EXACTLY what was asked.
  */
-function buildConversationContext(userMessage, chatHistory) {
-  const systemPrompt = `You are the IELTS Coach Assistant, a friendly and knowledgeable AI guide for the IELTS Coach learning platform. Your role is to help students prepare for the IELTS exam and navigate the platform features.
+function buildSystemInstruction() {
+  return `You are "IELTS Coach Assistant", an expert IELTS tutor inside the IELTS Coach web app.
 
-## About IELTS Coach Platform:
+ANSWERING RULES (must follow):
+1. Answer ONLY what the user asked. Do not add unrelated info, intros, or sign-offs.
+2. Be direct and concrete. Give the exact answer first; add brief detail only if essential.
+3. Match the length to the question:
+   - Yes/no or factual → 1 short sentence.
+   - "What is / define / meaning" → 1–2 sentences.
+   - "How to / steps / strategy" → max 5 short bullet points.
+   - "Explain / why" → max 3 short sentences.
+   - "List" → bullets, max 6 items, no extra prose.
+4. Never repeat the question. Never say "Great question", "Sure!", "Of course", "I hope this helps", etc.
+5. No emojis unless the user uses them first.
+6. Use plain text. Only use markdown bullets/bold when it clearly helps readability.
+7. If the question is unclear, ask ONE short clarifying question instead of guessing.
+8. If the question is outside IELTS or this platform, say briefly that you only help with IELTS / IELTS Coach.
+9. Do not invent platform features. Known sections: Dashboard, Speaking, Listening, Reading, Writing, MCQ, Full Test Simulator, Performance, Profile, Support.
 
-IELTS Coach is a comprehensive IELTS preparation platform featuring:
+IELTS FACTS YOU CAN USE:
+- 4 modules: Listening (~30 min + 10 min transfer), Reading (60 min), Writing (60 min), Speaking (11–14 min).
+- Band scores: 0–9 (half bands allowed).
+- Two versions: Academic and General Training.
+- Writing has Task 1 and Task 2; Speaking has Parts 1, 2, 3.
 
-### Core Features:
-- **User Authentication**: Email/password registration and Google Sign-In
-- **Dashboard**: Real-time progress tracking, band scores, recent activity, and study statistics
-- **Practice Modules**: Speaking, Listening, Reading, and Writing with AI-powered feedback
-- **Full Test Simulator**: Complete IELTS mock exams with timing and scoring across all four modules
-- **Performance Dashboard**: Detailed charts, weekly study graphs, and module breakdowns
-- **MCQ Practice Bank**: Timed multiple-choice questions with instant explanations
-- **User Profile**: Account management, progress history, and preferences
-- **Responsive Design**: Fully responsive layouts for all device sizes
+Always prioritize accuracy and brevity over friendliness.`;
+}
 
-### Practice Modules:
+/**
+ * Convert the client chat history + current message into Gemini's multi-turn `contents` format.
+ * Keeps only the last few turns to stay focused and reduce drift.
+ */
+function buildContents(userMessage, chatHistory) {
+  const MAX_TURNS = 6;
+  const trimmed = Array.isArray(chatHistory) ? chatHistory.slice(-MAX_TURNS) : [];
 
-1. **Speaking Practice**
-   - AI-powered speaking assistant with real-time feedback
-   - Feedback on fluency, coherence, pronunciation, and vocabulary
-   - Real-time conversation mode for interactive practice
-   - Daily speaking challenges
+  const contents = trimmed
+    .filter((m) => m && typeof m.text === 'string' && m.text.trim() !== '')
+    .map((m) => ({
+      role: m.isUser ? 'user' : 'model',
+      parts: [{ text: m.text }],
+    }));
 
-2. **Listening Practice**
-   - Audio-based listening exercises
-   - Multiple-choice questions with explanations
-   - Progress tracking for listening skills
+  contents.push({
+    role: 'user',
+    parts: [{ text: userMessage }],
+  });
 
-3. **Reading Practice**
-   - Reading passages with comprehension questions
-   - Practice with different question types (multiple choice, true/false, matching)
-   - Time management tips and strategies
+  return contents;
+}
 
-4. **Writing Practice**
-   - Writing prompts for Task 1 (Academic/General) and Task 2
-   - AI feedback on structure, coherence, vocabulary, and grammar
-   - Band score predictions and improvement suggestions
+/**
+ * Pick a token budget + length hint based on the question shape.
+ */
+function decideAnswerBudget(message) {
+  const text = (message || '').toLowerCase().trim();
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
 
-### Navigation:
-- **Dashboard**: Main hub with progress tracking, band scores, and quick access to practice modules
-- **Practice Screen**: Access to Speaking, Listening, Reading, and Writing modules
-- **Full Test Simulator**: Complete mock IELTS exams
-- **Performance Dashboard**: Detailed analytics and progress charts
-- **Profile Screen**: Account management and settings
+  // Yes/no or very short factual
+  if (/^(is|are|do|does|did|can|could|should|will|would|has|have)\b/.test(text) && wordCount <= 12) {
+    return { maxOutputTokens: 80, lengthHint: '1 short sentence' };
+  }
 
-## Your Personality:
-- Be friendly, encouraging, and supportive
-- Use clear, professional language appropriate for IELTS students
-- Be knowledgeable about IELTS exam format, scoring, and strategies
-- Provide helpful guidance without being overwhelming
-- Use emojis occasionally to make responses more engaging
-- Always be supportive and positive about the student's learning journey
+  // Definitions / what-is
+  if (/^(what is|what's|define|meaning of|who is)\b/.test(text)) {
+    return { maxOutputTokens: 140, lengthHint: '1–2 short sentences' };
+  }
 
-## How to Help:
-- Explain IELTS exam format, scoring (band scores 0-9), and test structure
-- Guide users on how to navigate the platform and use different features
-- Provide IELTS-specific tips and strategies for each module
-- Help students understand their progress and set realistic goals
-- Suggest practice routines and study plans
-- Answer questions about IELTS test-taking strategies
-- Help troubleshoot any issues with the platform
-- Encourage consistent practice and provide motivation
+  // Lists
+  if (/\b(list|types of|examples of|name (some|a few))\b/.test(text)) {
+    return { maxOutputTokens: 260, lengthHint: 'a short bulleted list (max 6 items)' };
+  }
 
-## IELTS Knowledge:
-- IELTS has 4 modules: Listening (30 min + 10 min transfer), Reading (60 min), Writing (60 min), Speaking (11-14 min)
-- Band scores range from 0-9 (non-user to expert user)
-- Academic vs General Training differences
-- Common question types and strategies for each module
-- Time management tips for each section
-- Common mistakes and how to avoid them
+  // How-to / steps / strategy
+  if (/\b(how (do|to|can|should)|steps|strategy|tips|guide|improve)\b/.test(text)) {
+    return { maxOutputTokens: 320, lengthHint: 'max 5 short bullet points' };
+  }
 
-Remember: You're here to help students achieve their IELTS goals through comprehensive preparation, personalized practice, and expert guidance. Always be encouraging and focus on helping them succeed!
+  // Explanations
+  if (/^(why|explain|describe|tell me about)\b/.test(text)) {
+    return { maxOutputTokens: 260, lengthHint: 'max 3 short sentences' };
+  }
 
-## Conversation History:
-${chatHistory.map(msg => 
-  msg.isUser ? `User: ${msg.text}` : `Assistant: ${msg.text}`
-).join('\n')}
+  // Default: short and focused
+  return { maxOutputTokens: 220, lengthHint: 'a short focused answer (2–3 sentences max)' };
+}
 
-## Current User Message:
-User: ${userMessage}
+/**
+ * Strip common filler/preamble Gemini sometimes adds.
+ */
+function cleanResponse(text) {
+  if (!text) return '';
+  let out = text.trim();
 
-Please respond to the user's latest message in a helpful and friendly way, focusing on IELTS preparation and the platform features.`;
+  const fillerPatterns = [
+    /^(sure|of course|certainly|absolutely|great question|good question|happy to help|no problem)[!,. ]*/i,
+    /^(here'?s|here is) (the|a|an|your) (answer|response|info|information|breakdown)[:,. ]*/i,
+    /^okay[!,. ]+/i,
+    /^well[,!.]+\s*/i,
+  ];
 
-  return systemPrompt;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const re of fillerPatterns) {
+      const next = out.replace(re, '').trim();
+      if (next !== out) {
+        out = next;
+        changed = true;
+      }
+    }
+  }
+
+  out = out.replace(/\n{3,}/g, '\n\n');
+  return out.trim();
 }
 
 module.exports = router;
