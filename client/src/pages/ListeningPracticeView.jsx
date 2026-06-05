@@ -614,26 +614,26 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
     const submitDisabled = !canSubmit;
 
     const mainContent = (
-        <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+        <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
             {!embedded && (
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h1 className="text-3xl md:text-4xl font-extrabold text-sky-700">Listening Practice</h1>
-                        <p className="text-slate-600 mt-2">
+                    <div className="min-w-0">
+                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-sky-700 break-words">Listening Practice</h1>
+                        <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">
                             Follow the official IELTS rules: single-play audio, strict timing, and automatic scoring.
                         </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                         <button
                             onClick={loadAIGeneratedListening}
                             disabled={generating}
-                            className="px-4 py-2 text-sm font-medium rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-3 sm:px-4 py-2 text-sm font-medium rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                         >
                             {generating ? "🔄 Generating..." : "✨ Generate New Test"}
                         </button>
                         <a
                             href="/dashboard"
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                            className="px-3 sm:px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
                         >
                             ← Back to Dashboard
                         </a>

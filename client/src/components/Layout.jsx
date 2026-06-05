@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import Section from './ui/Section';
 import {
     ChartIcon,
@@ -18,6 +18,31 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 export function AppLayout({ children }) {
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const location = useLocation();
+
+    // Auto-close mobile drawer when route changes
+    useEffect(() => {
+        setSidebarOpen(false);
+    }, [location.pathname]);
+
+    // Lock body scroll while mobile drawer is open
+    useEffect(() => {
+        if (sidebarOpen) {
+            const original = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            return () => { document.body.style.overflow = original; };
+        }
+    }, [sidebarOpen]);
+
+    // Close drawer on Escape key
+    useEffect(() => {
+        if (!sidebarOpen) return;
+        const onKey = (e) => { if (e.key === 'Escape') setSidebarOpen(false); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [sidebarOpen]);
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 text-gray-900 dark:text-slate-100 relative transition-colors">
             {/* Decorative gradient blobs */}
@@ -25,49 +50,71 @@ export function AppLayout({ children }) {
                 <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-blue-200/40 dark:bg-indigo-900/30 blur-3xl" />
                 <div className="absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-sky-200/40 dark:bg-sky-900/30 blur-3xl" />
             </div>
+
+            {/* Mobile overlay backdrop */}
+            {sidebarOpen && (
+                <div
+                    className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm md:hidden"
+                    onClick={() => setSidebarOpen(false)}
+                    aria-hidden="true"
+                />
+            )}
+
             <div className="flex min-h-screen">
-                <aside className="hidden md:flex md:w-72 flex-col bg-white/70 dark:bg-slate-800/90 backdrop-blur-xl border-r border-slate-200/70 dark:border-slate-700 shadow-sm md:sticky md:top-0 md:h-screen md:overflow-y-auto transition-colors">
-                    <div className="h-16 flex items-center gap-3 px-6 border-b border-slate-200 dark:border-slate-700">
-                        <Link to="/" className="flex items-center gap-3">
-                            <img 
-                                src="/IeltsCoach logo.jpeg" 
-                                alt="IELTS Coach Logo" 
+                <aside
+                    className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex-col bg-white dark:bg-slate-800 backdrop-blur-xl border-r border-slate-200/70 dark:border-slate-700 shadow-xl md:shadow-sm transition-transform duration-300 ease-out md:sticky md:top-0 md:z-auto md:flex md:h-screen md:translate-x-0 md:overflow-y-auto md:bg-white/70 dark:md:bg-slate-800/90 ${sidebarOpen ? 'flex translate-x-0' : 'hidden -translate-x-full md:flex'}`}
+                >
+                    <div className="h-16 flex items-center justify-between gap-3 px-4 sm:px-6 border-b border-slate-200 dark:border-slate-700">
+                        <Link to="/" className="flex items-center gap-3" onClick={() => setSidebarOpen(false)}>
+                            <img
+                                src="/IeltsCoach logo.jpeg"
+                                alt="IELTS Coach Logo"
                                 className="h-10 w-auto"
                             />
                             <span className="text-xl font-extrabold text-purple-700 dark:text-purple-300">IELTSCoach</span>
                         </Link>
+                        <button
+                            type="button"
+                            onClick={() => setSidebarOpen(false)}
+                            className="md:hidden p-2 -mr-2 rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                            aria-label="Close navigation"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
                     </div>
-                    <nav className="flex-1 p-4 space-y-1">
+                    <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                         <Section label="Overview" />
-                        <SideLink to="/dashboard" icon={ChartIcon} label="Dashboard" />
-                        <SideLink to="/performance" icon={InsightsIcon} label="Performance" />
+                        <SideLink to="/dashboard" icon={ChartIcon} label="Dashboard" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/performance" icon={InsightsIcon} label="Performance" onNavigate={() => setSidebarOpen(false)} />
                         <Section label="Practice" />
-                        <SideLink to="/speaking" icon={MicIcon} label="Speaking Practice" />
-                        <SideLink to="/listening" icon={HeadphonesIcon} label="Listening Practice" />
-                        <SideLink to="/reading" icon={BookIcon} label="Reading Practice" />
-                        <SideLink to="/writing" icon={PenIcon} label="Writing Practice" />
-                        <SideLink to="/mcq" icon={ListIcon} label="MCQ Practice" />
-                        <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" />
+                        <SideLink to="/speaking" icon={MicIcon} label="Speaking Practice" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/listening" icon={HeadphonesIcon} label="Listening Practice" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/reading" icon={BookIcon} label="Reading Practice" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/writing" icon={PenIcon} label="Writing Practice" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/mcq" icon={ListIcon} label="MCQ Practice" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/tests" icon={TabsIcon} label="Full Test Simulator" onNavigate={() => setSidebarOpen(false)} />
                         <Section label="Games" />
-                        <SideLink to="/game" icon={TabsIcon} label="Mini Games" />
-                        <SideLink to="/p4game" icon={TabsIcon} label="4ps Game" />
+                        <SideLink to="/game" icon={TabsIcon} label="Mini Games" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/p4game" icon={TabsIcon} label="4ps Game" onNavigate={() => setSidebarOpen(false)} />
                         <Section label="Account" />
-                        <SideLink to="/profile" icon={UserIcon} label="Profile" />
-                        <SideLink to="/support" icon={HelpIcon} label="Support" />
+                        <SideLink to="/profile" icon={UserIcon} label="Profile" onNavigate={() => setSidebarOpen(false)} />
+                        <SideLink to="/support" icon={HelpIcon} label="Support" onNavigate={() => setSidebarOpen(false)} />
                     </nav>
                     <div className="p-4 text-xs text-slate-500 dark:text-slate-400">© {new Date().getFullYear()} IELTS Coach</div>
                 </aside>
-                <div className="flex-1 flex flex-col">
-                    <Topbar />
-                    <main className="flex-1 p-4 md:p-6 lg:p-8 relative dark:bg-slate-900/50 transition-colors">
+
+                <div className="flex-1 flex flex-col min-w-0">
+                    <Topbar onOpenSidebar={() => setSidebarOpen(true)} />
+                    <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 relative dark:bg-slate-900/50 transition-colors min-w-0">
                         {children}
                         {/* Floating Chatbot Button */}
                         <Link
                             to="/chatbot"
-                            className="fixed bottom-6 right-6 md:bottom-8 md:right-8 z-40 inline-flex items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300 transition-all w-12 h-12 md:w-14 md:h-14"
+                            className="fixed bottom-4 right-4 md:bottom-8 md:right-8 z-40 inline-flex items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300 transition-all w-12 h-12 md:w-14 md:h-14"
                             aria-label="Open IELTS Chatbot"
                         >
-                            {/* Chat icon similar to Fiverr style */}
                             <svg
                                 className="w-6 h-6 md:w-7 md:h-7"
                                 viewBox="0 0 24 24"
@@ -89,7 +136,7 @@ export function AppLayout({ children }) {
     );
 }
 
-function Topbar() {
+function Topbar({ onOpenSidebar }) {
     const navigate = useNavigate();
     const { user, logout } = useAuth();
     const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -132,7 +179,7 @@ function Topbar() {
     const dropdownContent = dropdownOpen && user && (
         <div
             ref={dropdownRef}
-            className="fixed w-64 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 shadow-xl py-2"
+            className="fixed w-64 max-w-[calc(100vw-1rem)] rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 shadow-xl py-2"
             style={{
                 top: dropdownPosition.top,
                 right: dropdownPosition.right,
@@ -176,16 +223,21 @@ function Topbar() {
 
     return (
         <>
-            <header className="h-16 bg-white/70 dark:bg-slate-800/80 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-700 flex items-center justify-between px-4 md:px-6 shrink-0 transition-colors">
-                <div className="flex items-center gap-3">
-                    <div className="md:hidden">
-                        <button className="p-2 rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600" aria-label="Open navigation">
-                            <MenuIcon className="w-5 h-5 text-slate-700 dark:text-slate-200" />
-                        </button>
-                    </div>
-                    <span className="font-semibold text-slate-700 dark:text-slate-200">Welcome back</span>
+            <header className="h-16 bg-white/70 dark:bg-slate-800/80 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-700 flex items-center justify-between px-3 sm:px-4 md:px-6 shrink-0 transition-colors sticky top-0 z-30">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    <button
+                        type="button"
+                        onClick={onOpenSidebar}
+                        className="md:hidden p-2 -ml-1 rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 shrink-0"
+                        aria-label="Open navigation"
+                    >
+                        <MenuIcon className="w-5 h-5 text-slate-700 dark:text-slate-200" />
+                    </button>
+                    <span className="font-semibold text-slate-700 dark:text-slate-200 truncate text-sm sm:text-base">
+                        Welcome back{user && (displayName ? `, ${displayName}` : '')}
+                    </span>
                 </div>
-                <div className="flex items-center justify-end">
+                <div className="flex items-center justify-end shrink-0">
                     {user && (
                         <button
                             ref={avatarButtonRef}
@@ -216,20 +268,19 @@ function Topbar() {
     );
 }
 
-function SideLink({ to, icon: Icon, label }) {
+function SideLink({ to, icon: Icon, label, onNavigate }) {
     return (
         <NavLink
             to={to}
-            className={({ isActive }) => `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all ${isActive ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+            onClick={onNavigate}
+            className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all ${isActive ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
         >
-            <Icon className="w-4 h-4" />
-            <span>{label}</span>
+            <Icon className="w-4 h-4 shrink-0" />
+            <span className="truncate">{label}</span>
         </NavLink>
     );
 }
 
- 
+
 
 export default AppLayout;
-
-

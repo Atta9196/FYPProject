@@ -182,18 +182,18 @@ export function DashboardView() {
     return (
         <AppLayout>
             <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-                <div className="space-y-8 p-4 md:p-6 lg:p-8">
+                <div className="space-y-4 sm:space-y-6 lg:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8">
                     {/* Welcome Header */}
-                    <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-8 text-white shadow-xl">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-4xl md:text-5xl font-extrabold mb-3">
+                    <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-5 sm:p-6 md:p-8 text-white shadow-xl">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-extrabold mb-2 md:mb-3 break-words">
                                     Welcome back, {userName}! 👋
                                 </h1>
-                                <p className="text-xl text-blue-100 mb-2">{currentQuote}</p>
-                                <p className="text-blue-200">Ready to continue your IELTS journey?</p>
+                                <p className="text-base sm:text-lg md:text-xl text-blue-100 mb-1 md:mb-2">{currentQuote}</p>
+                                <p className="text-sm md:text-base text-blue-200">Ready to continue your IELTS journey?</p>
                             </div>
-                            <div className="hidden md:block">
+                            <div className="hidden md:block shrink-0">
                                 <div className="text-right">
                                     <p className="text-blue-200 text-sm">Current Time</p>
                                     <p className="text-2xl font-bold">{currentTime}</p>
@@ -203,16 +203,16 @@ export function DashboardView() {
                     </div>
 
                     {/* Band Overview Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-                        <div className={`bg-gradient-to-br ${getBandColor(progressData.bands.overall)} rounded-2xl p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300`}>
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-sm font-semibold opacity-90">Overall Band</h3>
-                                <span className="text-2xl">📊</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 lg:gap-6">
+                        <div className={`col-span-2 sm:col-span-1 bg-gradient-to-br ${getBandColor(progressData.bands.overall)} rounded-2xl p-4 sm:p-5 lg:p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300`}>
+                            <div className="flex items-center justify-between mb-2 sm:mb-4">
+                                <h3 className="text-xs sm:text-sm font-semibold opacity-90">Overall Band</h3>
+                                <span className="text-xl sm:text-2xl">📊</span>
                             </div>
-                            <div className="text-3xl font-extrabold mb-2">
+                            <div className="text-2xl sm:text-3xl font-extrabold mb-1 sm:mb-2">
                                 {progressData.bands.overall > 0 ? progressData.bands.overall.toFixed(1) : '--'}
                             </div>
-                            <div className="flex items-center text-sm opacity-90">
+                            <div className="flex items-center text-xs sm:text-sm opacity-90">
                                 {progressData.bands.overall > 0 ? (
                                     <>
                                         <span className="mr-1">📈</span>
@@ -227,19 +227,19 @@ export function DashboardView() {
                         {Object.entries(progressData.bands).filter(([key]) => key !== 'overall').map(([module, score]) => {
                             const trend = progressData.trends[module] || 0;
                             return (
-                            <div key={module} className={`bg-gradient-to-br ${getBandColor(score)} rounded-2xl p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300`}>
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-sm font-semibold opacity-90 capitalize">{module}</h3>
-                                    <span className="text-2xl">
+                            <div key={module} className={`bg-gradient-to-br ${getBandColor(score)} rounded-2xl p-4 sm:p-5 lg:p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300`}>
+                                <div className="flex items-center justify-between mb-2 sm:mb-4">
+                                    <h3 className="text-xs sm:text-sm font-semibold opacity-90 capitalize">{module}</h3>
+                                    <span className="text-xl sm:text-2xl">
                                         {module === 'speaking' ? '🎙️' : 
                                          module === 'reading' ? '📖' : 
                                          module === 'writing' ? '✍️' : '👂'}
                                     </span>
                                 </div>
-                                    <div className="text-3xl font-extrabold mb-2">
+                                    <div className="text-2xl sm:text-3xl font-extrabold mb-1 sm:mb-2">
                                         {score > 0 ? score.toFixed(1) : '--'}
                                     </div>
-                                <div className="flex items-center text-sm opacity-90">
+                                <div className="flex items-center text-xs sm:text-sm opacity-90">
                                         {score > 0 ? (
                                             <>
                                                 <span className="mr-1">{trend >= 0 ? '↗' : '↘'}</span>
@@ -255,7 +255,7 @@ export function DashboardView() {
                     </div>
 
                     {/* Study Summary */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                         <StatCard 
                             title="Tests Completed" 
                             value={progressData.stats.testsCompleted} 
@@ -289,11 +289,11 @@ export function DashboardView() {
                     <WeeklyStudyGraph />
 
                     {/* Main Content Grid */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
                         {/* Quick Actions */}
-                        <div className="lg:col-span-2 space-y-6">
-                            <h2 className="text-2xl font-bold text-slate-800 mb-6">Quick Actions</h2>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+                            <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-3 sm:mb-6">Quick Actions</h2>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                                 <Link to="/speaking" className="group">
                                     <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200 shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-105">
                                         <div className="text-center">

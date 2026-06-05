@@ -215,17 +215,17 @@ export function PerformanceDashboardView() {
     return (
         <AppLayout>
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-                <div className="space-y-8 p-4 md:p-6 lg:p-8">
+                <div className="space-y-4 sm:space-y-6 lg:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8">
                     {/* Header */}
-                    <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-indigo-800 rounded-2xl p-8 text-white shadow-xl">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-4xl md:text-5xl font-extrabold mb-3">
+                    <div className="bg-gradient-to-r from-slate-800 via-blue-800 to-indigo-800 rounded-2xl p-5 sm:p-6 md:p-8 text-white shadow-xl">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-extrabold mb-2 md:mb-3 break-words">
                                     Performance Analytics 📊
                                 </h1>
-                                    <p className="text-xl text-blue-100">Detailed insights into your IELTS progress</p>
+                                <p className="text-base sm:text-lg md:text-xl text-blue-100">Detailed insights into your IELTS progress</p>
                             </div>
-                            <div className="hidden md:block">
+                            <div className="hidden md:block shrink-0">
                                 <div className="text-right">
                                     <p className="text-blue-200 text-sm">Days to Test</p>
                                     <p className="text-3xl font-bold">{performanceData.goals.daysRemaining}</p>
@@ -236,14 +236,14 @@ export function PerformanceDashboardView() {
 
                     {/* Timeframe Selector */}
                     <div className="flex justify-center">
-                        <div className="bg-white rounded-xl p-2 shadow-lg border border-slate-200">
-                            <div className="flex space-x-2">
+                        <div className="bg-white rounded-xl p-1.5 sm:p-2 shadow-lg border border-slate-200 max-w-full overflow-x-auto">
+                            <div className="flex space-x-1 sm:space-x-2">
                                 {['1month', '3months', '6months', '1year'].map((timeframe) => (
                                     <button
                                         key={timeframe}
                                         type="button"
                                         onClick={() => setSelectedTimeframe(timeframe)}
-                                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                                        className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap ${
                                             selectedTimeframe === timeframe
                                                 ? 'bg-blue-600 text-white shadow-md'
                                                 : 'text-slate-600 hover:bg-slate-100'
@@ -259,7 +259,7 @@ export function PerformanceDashboardView() {
                     </div>
 
                     {/* Overall Progress Graphs */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
                         <Panel title="Band Score Growth" className="bg-white/90 backdrop-blur rounded-2xl shadow-lg">
                             <div className="h-80">
                                 <ResponsiveContainer width="100%" height="100%">

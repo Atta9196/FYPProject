@@ -217,11 +217,11 @@ export function FullTestSimulatorView() {
     if (!testStarted && !testCompleted) {
         return (
             <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-indigo-50 via-white to-purple-50 min-h-screen">
+                <div className="p-3 sm:p-6 md:p-10 lg:p-12 bg-gradient-to-br from-indigo-50 via-white to-purple-50 min-h-screen">
                     <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-6">
-                        <div className="text-center space-y-4">
-                            <h1 className="text-4xl font-extrabold text-indigo-700">IELTS Full Test Simulator</h1>
-                            <p className="text-lg text-slate-600">
+                        <div className="text-center space-y-3 sm:space-y-4">
+                            <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-indigo-700 break-words">IELTS Full Test Simulator</h1>
+                            <p className="text-base sm:text-lg text-slate-600">
                                 Complete all four modules in one comprehensive test session
                             </p>
                         </div>
@@ -288,7 +288,7 @@ export function FullTestSimulatorView() {
                             </ul>
                         </div>
                         
-                        <div className="flex gap-4">
+                        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                             <button
                                 onClick={handleStartTest}
                                 className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
@@ -319,14 +319,14 @@ export function FullTestSimulatorView() {
         
         return (
             <AppLayout>
-                <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-emerald-50 via-white to-green-50 min-h-screen">
+                <div className="p-3 sm:p-6 md:p-10 lg:p-12 bg-gradient-to-br from-emerald-50 via-white to-green-50 min-h-screen">
                     <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-6">
-                        <div className="text-center space-y-4">
-                            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
-                                <span className="text-4xl">✅</span>
+                        <div className="text-center space-y-3 sm:space-y-4">
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+                                <span className="text-3xl sm:text-4xl">✅</span>
                             </div>
-                            <h1 className="text-4xl font-extrabold text-emerald-700">Test Completed!</h1>
-                            <p className="text-lg text-slate-600">Congratulations on completing the full IELTS test</p>
+                            <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-emerald-700 break-words">Test Completed!</h1>
+                            <p className="text-base sm:text-lg text-slate-600">Congratulations on completing the full IELTS test</p>
                         </div>
                         
                         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-6">
@@ -368,7 +368,7 @@ export function FullTestSimulatorView() {
                             </div>
                         </div>
                         
-                        <div className="flex gap-4">
+                        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                             <button
                                 onClick={() => {
                                     testCompletedRef.current = false;
@@ -404,15 +404,15 @@ export function FullTestSimulatorView() {
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
             {/* Test Header */}
             <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-                <div className="max-w-7xl mx-auto px-4 py-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <h1 className="text-xl font-bold text-slate-800">IELTS Full Test</h1>
-                            <div className="flex items-center gap-2">
+                <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                        <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+                            <h1 className="text-base sm:text-lg lg:text-xl font-bold text-slate-800">IELTS Full Test</h1>
+                            <div className="flex items-center gap-1.5 sm:gap-2">
                                 {moduleOrder.map((module, index) => (
                                     <div
                                         key={module}
-                                        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+                                        className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-semibold ${
                                             index < currentModuleIndex
                                                 ? 'bg-emerald-500 text-white'
                                                 : index === currentModuleIndex
@@ -425,15 +425,15 @@ export function FullTestSimulatorView() {
                                 ))}
                             </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="text-right">
+                        <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-between lg:justify-end">
+                            <div className="text-left lg:text-right">
                                 <p className="text-xs text-slate-500">Overall Time</p>
-                                <p className="text-lg font-bold text-slate-800">{formatTime(overallTimer)}</p>
+                                <p className="text-base sm:text-lg font-bold text-slate-800">{formatTime(overallTimer)}</p>
                             </div>
                             {currentModule && (
-                                <div className="text-right">
+                                <div className="text-left lg:text-right">
                                     <p className="text-xs text-slate-500 capitalize">{currentModule} Time</p>
-                                    <p className="text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
+                                    <p className="text-base sm:text-lg font-bold text-slate-800">{formatTime(moduleTimers[currentModule])}</p>
                                     {!currentModuleReady && (
                                         <p className="text-xs text-amber-600 mt-0.5">Timer starts when test is ready</p>
                                     )}
@@ -445,7 +445,7 @@ export function FullTestSimulatorView() {
                                         handleTestComplete();
                                     }
                                 }}
-                                className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+                                className="px-3 sm:px-4 py-2 border border-red-300 text-red-600 text-sm rounded-lg hover:bg-red-50 transition-colors whitespace-nowrap"
                             >
                                 Exit Test
                             </button>
@@ -453,7 +453,7 @@ export function FullTestSimulatorView() {
                     </div>
                     
                     {/* Progress Bar */}
-                    <div className="mt-4">
+                    <div className="mt-3 sm:mt-4">
                         <div className="w-full bg-slate-200 rounded-full h-2">
                             <div
                                 className="bg-indigo-600 h-2 rounded-full transition-all duration-300"

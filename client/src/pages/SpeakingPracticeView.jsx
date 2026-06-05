@@ -490,23 +490,23 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     // Mode Selection Screen
     if (!selectedMode) {
         const modeSelectionContent = (
-            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-3 sm:p-4">
                     <div className="max-w-4xl w-full">
                         {/* Title */}
-                        <div className="text-center mb-12">
-                            <h1 className="text-4xl md:text-5xl font-extrabold text-blue-700 mb-4">
+                        <div className="text-center mb-6 sm:mb-10 md:mb-12">
+                            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-extrabold text-blue-700 mb-2 sm:mb-4 break-words">
                                 IELTS Speaking Practice
                             </h1>
-                            <p className="text-xl text-slate-600">
+                            <p className="text-base sm:text-lg md:text-xl text-slate-600">
                                 Choose your practice mode to improve your speaking skills
                             </p>
                         </div>
 
                         {/* Mode Selection Cards */}
-                        <div className="grid md:grid-cols-3 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
                             {/* Record & Submit Mode */}
                             <div 
-                                className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-200"
+                                className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-200"
                                 onClick={() => setSelectedMode('record')}
                             >
                                 <div className="text-center">
@@ -538,7 +538,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
 
                             {/* Real-time Text Mode */}
                             <div 
-                                className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-green-200"
+                                className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-green-200"
                                 onClick={() => setSelectedMode('realtime')}
                             >
                                 <div className="text-center">
@@ -570,7 +570,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
 
                             {/* Voice Conversation Mode */}
                             <div 
-                                className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-purple-200"
+                                className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-purple-200"
                                 onClick={() => setSelectedMode('voice')}
                             >
                                 <div className="text-center">
@@ -609,17 +609,17 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     // Record & Submit Mode
     if (selectedMode === 'record') {
         const recordModeContent = (
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-blue-50 via-white to-indigo-50 min-h-screen">
+            <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-blue-50 via-white to-indigo-50 min-h-screen">
                     {/* Header */}
                     {!embedded && (
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-3xl md:text-4xl font-extrabold text-blue-700">Record & Submit Practice</h1>
-                                <p className="text-slate-600 mt-2">Record your response and get detailed AI feedback</p>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-blue-700 break-words">Record & Submit Practice</h1>
+                                <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">Record your response and get detailed AI feedback</p>
                             </div>
                             <button
                                 onClick={resetToModeSelection}
-                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                                className="self-start sm:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
                             >
                                 ← Back to Modes
                             </button>
@@ -801,17 +801,17 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     // Real-time Mode
     if (selectedMode === 'realtime') {
         const realtimeModeContent = (
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
+            <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-green-50 via-white to-emerald-50 min-h-screen">
                     {/* Header */}
                     {!embedded && (
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-3xl md:text-4xl font-extrabold text-green-700">Real-time Speaking Practice</h1>
-                                <p className="text-slate-600 mt-2">Have a natural conversation with an AI IELTS examiner</p>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-green-700 break-words">Real-time Speaking Practice</h1>
+                                <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">Have a natural conversation with an AI IELTS examiner</p>
                             </div>
                             <button
                                 onClick={resetToModeSelection}
-                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                                className="self-start sm:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
                             >
                                 ← Back to Modes
                             </button>
@@ -949,17 +949,17 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     // Voice Conversation Mode
     if (selectedMode === 'voice') {
         const voiceModeContent = (
-            <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-purple-50 via-white to-pink-50 min-h-screen">
+            <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-purple-50 via-white to-pink-50 min-h-screen">
                     {/* Header */}
                     {!embedded && (
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h1 className="text-3xl md:text-4xl font-extrabold text-purple-700">Voice Conversation</h1>
-                                <p className="text-slate-600 mt-2">Have a real-time voice conversation with an AI IELTS examiner</p>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-purple-700 break-words">Voice Conversation</h1>
+                                <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">Have a real-time voice conversation with an AI IELTS examiner</p>
                             </div>
                             <button
                                 onClick={resetToModeSelection}
-                                className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                                className="self-start sm:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
                             >
                                 ← Back to Modes
                             </button>
