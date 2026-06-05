@@ -1,7 +1,7 @@
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../firebase/config';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://ielts-coach-backend.onrender.com';
 
 export async function register({ firstName, lastName, email, password }) {
 	const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
