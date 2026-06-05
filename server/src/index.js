@@ -11,16 +11,37 @@ dotenv.config({ path: envPath });
 
 const app = express();
 const server = http.createServer(app);
+
+// ✅ Allowed origins for CORS (Vercel production + local dev).
+// Add more domains via the ALLOWED_ORIGINS env var (comma-separated) if needed.
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "https://fyp-project-red.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()) : []),
+].filter(Boolean);
+
+function corsOriginCheck(origin, callback) {
+  // Allow non-browser requests (curl, server-to-server) and same-origin requests with no Origin header
+  if (!origin) return callback(null, true);
+  // Allow any Vercel preview deployment for this project
+  if (/\.vercel\.app$/i.test(new URL(origin).hostname)) return callback(null, true);
+  if (allowedOrigins.includes(origin)) return callback(null, true);
+  return callback(new Error(`CORS: origin ${origin} not allowed`), false);
+}
+
 const io = socketIo(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+    origin: corsOriginCheck,
+    methods: ["GET", "POST"],
+    credentials: false,
+  },
 });
 
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({ origin: true, credentials: false }));
+app.use(cors({ origin: corsOriginCheck, credentials: false }));
 app.use(express.json({ limit: '10mb' })); // Increase limit for larger payloads
 app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Support URL-encoded bodies
 
