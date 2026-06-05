@@ -93,7 +93,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const loadRandomQuestion = async () => {
         try {
             setIsLoadingQuestion(true);
-            const response = await fetch('http://localhost:5000/api/speaking/question');
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/question');
             const data = await response.json();
             
             if (data.success) {
@@ -160,7 +160,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
             formData.append('question', currentQuestion);
             formData.append('userId', 'current-user'); // Replace with actual user ID
             
-            const response = await fetch('http://localhost:5000/api/speaking/evaluate', {
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/evaluate', {
                 method: 'POST',
                 body: formData
             });
@@ -208,7 +208,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const startRealtimeSession = async () => {
         try {
             setIsTyping(true);
-            const response = await fetch('http://localhost:5000/api/speaking/realtime/start', {
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/realtime/start', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -257,7 +257,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
             let accumulatedMessage = '';
             setStreamingMessage(""); // Reset streaming message
             
-            const response = await fetch('http://localhost:5000/api/speaking/realtime/continue', {
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/realtime/continue', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -337,7 +337,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const endRealtimeSession = async () => {
         try {
             setIsTyping(true);
-            const response = await fetch('http://localhost:5000/api/speaking/realtime/end', {
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/realtime/end', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -397,7 +397,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const handleVoiceSessionEnd = async ({ sessionId, conversationHistory }) => {
         try {
             setIsVoiceEvaluating(true);
-            const response = await fetch('http://localhost:5000/api/speaking/realtime/end', {
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/realtime/end', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

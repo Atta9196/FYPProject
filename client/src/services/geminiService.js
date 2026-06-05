@@ -1,6 +1,6 @@
 // Gemini Service for Web - Similar to mobile app
 // Vite uses import.meta.env instead of process.env
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://ielts-coach-backend.onrender.com';
 
 export class GeminiService {
   constructor() {

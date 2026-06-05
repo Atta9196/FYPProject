@@ -214,7 +214,7 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
 
     const apiBase = typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL
         ? import.meta.env.VITE_API_BASE_URL
-        : "http://localhost:5000";
+        : "https://ielts-coach-backend.onrender.com";
 
     // Load AI-generated listening test
     const loadAIGeneratedListening = useCallback(async () => {

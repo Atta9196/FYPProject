@@ -42,7 +42,7 @@ export function VoiceConversation({ onEndSession }) {
             return;
         }
 
-        const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
+        const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'https://ielts-coach-backend.onrender.com';
         
         if (!socketRef.current) {
             console.log('🔌 Initializing Socket.io connection...');
@@ -565,7 +565,7 @@ export function VoiceConversation({ onEndSession }) {
             // Start WebSocket conversation
             if (!socketRef.current) {
                 // Initialize socket if not already initialized
-                const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'http://localhost:5000';
+                const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) || (typeof window !== 'undefined' && window.__SERVER_URL__) || 'https://ielts-coach-backend.onrender.com';
                 socketRef.current = io(SERVER_URL);
                 
                 // Set up event handlers

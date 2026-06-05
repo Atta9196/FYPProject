@@ -338,7 +338,7 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
             setGenerating(true);
             setErrorMessage(null);
             
-            const response = await fetch('http://localhost:5000/api/reading/generate');
+            const response = await fetch('https://ielts-coach-backend.onrender.com/api/reading/generate');
             const data = await response.json();
             
             if (data.success && data.readingSet) {

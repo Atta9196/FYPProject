@@ -44,14 +44,14 @@ JWT_EXPIRES_IN=7d
 
 ```
 # Use only if not running through Vite dev proxy
-VITE_API_BASE_URL=http://localhost:5000
+VITE_API_BASE_URL=https://ielts-coach-backend.onrender.com
 
 # Google OAuth 2.0 Web client ID for the same Firebase project
 VITE_GOOGLE_CLIENT_ID=YOUR_GOOGLE_WEB_CLIENT_ID
 ```
 
 4. Health check (server)
-   - Visit `http://localhost:5000/health`
+   - Visit `https://ielts-coach-backend.onrender.com/health`
    - Ensure all booleans are `true`:
      - `env.jwtSecret`
      - `env.firebaseWebApiKey`

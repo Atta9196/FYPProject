@@ -31,7 +31,7 @@ export function createRealtimeAgent() {
       // 1) Get ephemeral token from server (try /api/speaking/realtime/token first, then fallbacks)
       const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) 
         || (typeof window !== 'undefined' && window.__SERVER_URL__) 
-        || 'http://localhost:5000';
+        || 'https://ielts-coach-backend.onrender.com';
       let resp, session;
       
       try {
