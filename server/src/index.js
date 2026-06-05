@@ -55,6 +55,25 @@ console.log("Private Key Exists:", Boolean(process.env.FIREBASE_PRIVATE_KEY));
 console.log("OPENAI_API_KEY set:", Boolean(process.env.OPENAI_API_KEY));
 console.log("======================================");
 
+// ✅ Root route — friendly landing message so visitors don't see "Cannot GET /"
+app.get("/", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "IELTS Coach Backend API",
+    message: "Server is running. Use /health to check status or /api/* for API endpoints.",
+    endpoints: {
+      health: "/health",
+      auth: "/api/auth",
+      speaking: "/api/speaking",
+      voice: "/api/voice",
+      writing: "/api/writing",
+      reading: "/api/reading",
+      listening: "/api/listening",
+      chatbot: "/api/chatbot",
+    },
+  });
+});
+
 // ✅ Health route
 app.get("/health", (_req, res) => {
     console.log(">>> HEALTH CHECK ROUTE IS RUNNING <<<");
