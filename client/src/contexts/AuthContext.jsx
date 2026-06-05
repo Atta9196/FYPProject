@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as api from '../services/api/authService';
+import { startProgressSync, stopProgressSync } from '../services/progressSync';
 
 const AuthContext = createContext(null);
 
@@ -19,6 +20,19 @@ export function AuthProvider({ children }) {
 		}
 		setLoading(false);
 	}, []);
+
+	// Keep progress sync bound to the current user. Pulls history from the
+	// server on login / app boot so the dashboard shows your real data even
+	// after switching devices or deploying to a new origin.
+	useEffect(() => {
+		if (user && token) {
+			startProgressSync(user, token).catch((err) => {
+				console.warn('[Auth] progress sync init failed:', err.message);
+			});
+		} else {
+			stopProgressSync({ keepCache: true });
+		}
+	}, [user, token]);
 
 	const persist = useCallback((data) => {
 		setUser(data.user);
@@ -45,6 +59,7 @@ export function AuthProvider({ children }) {
 	}, [persist]);
 
 	const logout = useCallback(() => {
+		stopProgressSync({ keepCache: true });
 		setUser(null);
 		setToken(null);
 		localStorage.removeItem('auth');

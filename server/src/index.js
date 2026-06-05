@@ -91,6 +91,7 @@ app.get("/", (_req, res) => {
       reading: "/api/reading",
       listening: "/api/listening",
       chatbot: "/api/chatbot",
+      progress: "/api/progress",
     },
   });
 });
@@ -205,6 +206,10 @@ app.use("/api/listening", listeningRoutes);
 // Chatbot (Gemini) routes
 const chatbotRoutes = require("./routes/chatbotRoutes");
 app.use("/api/chatbot", chatbotRoutes);
+
+// Progress storage routes (per-user history persisted in Firestore)
+const progressRoutes = require("./routes/progressRoutes");
+app.use("/api/progress", progressRoutes);
 
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');
