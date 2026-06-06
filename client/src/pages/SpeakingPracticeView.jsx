@@ -3,6 +3,11 @@ import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import { useAuth } from "../contexts/AuthContext";
 import { getStorageKeyForModule } from "../services/progressService";
+import {
+    clearCachedGeneration,
+    getCachedGeneration,
+    saveCachedGeneration,
+} from "../services/api/generationCacheApi";
 import MicButton from "../features/speaking/components/MicButton";
 import { VoiceConversation } from "../features/speaking/components/VoiceConversation";
 
@@ -89,18 +94,40 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
         return () => clearInterval(interval);
     }, [isRecording, timeLeft]);
 
-    // Load a random IELTS question for record mode
-    const loadRandomQuestion = async () => {
+    /**
+     * Speaking question loader with cache-first behaviour.
+     *   force=false → return the cached question if one exists (default for
+     *                 auto-loads), otherwise fetch a new one and cache it.
+     *   force=true  → ignore cache, ask the API for a fresh question, and
+     *                 overwrite the cache (used by the "New Question"
+     *                 button = regenerate).
+     */
+    const loadRandomQuestion = async ({ force = false } = {}) => {
         try {
             setIsLoadingQuestion(true);
+
+            if (!force) {
+                const cached = await getCachedGeneration("speaking");
+                if (cached?.question) {
+                    setCurrentQuestion(cached.question);
+                    return;
+                }
+            } else {
+                await clearCachedGeneration("speaking");
+            }
+
             const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/question');
             const data = await response.json();
-            
-            if (data.success) {
-                setCurrentQuestion(data.question);
-            } else {
-                console.error('Failed to load question:', data.error);
-                setCurrentQuestion("Describe a memorable journey you have taken. You should say where you went, how you traveled, what you saw and did, and explain why it was memorable.");
+
+            const question = (data.success && data.question)
+                ? data.question
+                : "Describe a memorable journey you have taken. You should say where you went, how you traveled, what you saw and did, and explain why it was memorable.";
+
+            setCurrentQuestion(question);
+            // Cache only when we have a real API question (don't persist the
+            // hard-coded fallback so we keep retrying real generation later).
+            if (data.success && data.question) {
+                saveCachedGeneration("speaking", { question });
             }
         } catch (error) {
             console.error('Error loading question:', error);
@@ -469,12 +496,26 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     };
 
     const loadNewQuestion = () => {
-        loadRandomQuestion();
-            setTimeLeft(120);
-            setIsRecording(false);
+        // "New Question" button = regenerate: force a fresh question and
+        // overwrite the cache. Pre-cached question is intentionally
+        // discarded here.
+        loadRandomQuestion({ force: true });
+        setTimeLeft(120);
+        setIsRecording(false);
         setEvaluation(null);
         setTranscript("");
     };
+
+    // Auto-restore the user's saved question when they enter Record mode.
+    // Cache-first; only calls OpenAI if no question is cached yet.
+    useEffect(() => {
+        if (selectedMode !== "record") return;
+        if (currentQuestion || isLoadingQuestion) return;
+        loadRandomQuestion();
+        // loadRandomQuestion is stable enough for this flow; intentionally
+        // not in the dep array to avoid an extra load.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedMode]);
 
     const resetToModeSelection = () => {
         setSelectedMode(null);

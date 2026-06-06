@@ -4,6 +4,11 @@ import Panel from "../components/ui/Panel";
 import { useAuth } from "../contexts/AuthContext";
 import { getStorageKeyForModule } from "../services/progressService";
 import {
+    clearCachedGeneration,
+    getCachedGeneration,
+    saveCachedGeneration,
+} from "../services/api/generationCacheApi";
+import {
     academicTask1Prompts,
     generalTask1Prompts,
     getRandomPrompt,
@@ -179,19 +184,64 @@ export function WritingPracticeView({ embedded = false, onReady }) {
             setErrorMessage(null);
             setWarnings([]);
             setPasteAttemptsBlocked(0);
+            return nextPrompt;
         },
         []
     );
 
+    // Cache-first prompt loader. On first mount: try to restore the user's
+    // previously assigned writing prompt; if none exists yet, persist the
+    // current random pick so it survives reloads.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const cached = await getCachedGeneration("writing");
+                if (cancelled) return;
+                if (cached?.taskId && cached?.prompt && writingTaskConfigs[cached.taskId]) {
+                    resetSession(cached.taskId, cached.prompt);
+                } else if (currentPrompt?.id) {
+                    saveCachedGeneration("writing", {
+                        taskId: activeTaskId,
+                        promptId: currentPrompt.id,
+                        prompt: currentPrompt,
+                    });
+                }
+            } catch (err) {
+                console.warn("[writing] cache load failed:", err.message);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+        // We intentionally only run this once on mount; activeTaskId /
+        // currentPrompt below are seeded from useState defaults.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const handleSelectTask = useCallback(
-        (taskId) => {
-            resetSession(taskId);
+        async (taskId) => {
+            const nextPrompt = resetSession(taskId);
+            // Treat task switch as a regenerate: overwrite the cache so the
+            // new random prompt is the one we restore next time.
+            await clearCachedGeneration("writing");
+            saveCachedGeneration("writing", {
+                taskId,
+                promptId: nextPrompt?.id,
+                prompt: nextPrompt,
+            });
         },
         [resetSession]
     );
 
-    const handleRefreshPrompt = useCallback(() => {
-        resetSession(activeTaskId, getRandomPrompt(activeTaskId));
+    const handleRefreshPrompt = useCallback(async () => {
+        const nextPrompt = resetSession(activeTaskId, getRandomPrompt(activeTaskId));
+        await clearCachedGeneration("writing");
+        saveCachedGeneration("writing", {
+            taskId: activeTaskId,
+            promptId: nextPrompt?.id,
+            prompt: nextPrompt,
+        });
     }, [activeTaskId, resetSession]);
 
     const handleStartSession = useCallback(() => {

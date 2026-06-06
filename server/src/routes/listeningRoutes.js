@@ -14,6 +14,13 @@ const listeningAudioCache = new Map(); // key: `${testId}:${sectionId}` -> { buf
 const LISTENING_AUDIO_TTL_MS = 60 * 60 * 1000; // 1 hour
 let listeningCleanupStarted = false;
 
+// In-memory cache of listening test scripts so the audio endpoint can
+// rebuild audio on demand when the buffer is missing (e.g. after a server
+// restart). Populated by the generate route AND by the generation-cache
+// route when it serves a cached listening test.
+const listeningScriptCache = new Map(); // testId -> { sections, createdAt }
+const LISTENING_SCRIPT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 function makeAudioKey(testId, sectionId) {
   return `${testId}:${sectionId}`;
 }
@@ -44,10 +51,41 @@ function startListeningCleanup() {
         listeningAudioCache.delete(key);
       }
     }
+    for (const [key, entry] of listeningScriptCache.entries()) {
+      if (now - entry.createdAt > LISTENING_SCRIPT_TTL_MS) {
+        listeningScriptCache.delete(key);
+      }
+    }
   }, 10 * 60 * 1000);
 }
 
 startListeningCleanup();
+
+/**
+ * Remember the dialogue/listening scripts for a generated test so the audio
+ * endpoint can rebuild missing audio later. Safe to call repeatedly.
+ */
+function registerCachedListeningTest(testData) {
+  if (!testData || !testData.testId || !Array.isArray(testData.sections)) return;
+  const sectionsWithScripts = testData.sections.filter(
+    (s) => s && (Array.isArray(s.dialogueScript) || s.listeningScript)
+  );
+  if (!sectionsWithScripts.length) return;
+  listeningScriptCache.set(testData.testId, {
+    sections: testData.sections,
+    createdAt: Date.now(),
+  });
+}
+
+function getCachedSection(testId, sectionId) {
+  const entry = listeningScriptCache.get(testId);
+  if (!entry) return null;
+  return (
+    entry.sections.find(
+      (s) => String(s.id) === String(sectionId)
+    ) || null
+  );
+}
 
 // OpenAI TTS allows max 4096 characters per request; use 4000 to be safe
 const TTS_CHUNK_SIZE = 4000;
@@ -255,11 +293,53 @@ function normalizeSections(raw) {
 
 /**
  * Stream TTS audio for a generated listening section.
+ *
+ * If the buffer is missing from the in-memory cache (server restart, TTL
+ * expiry, etc.) but we still have the script text registered via
+ * registerCachedListeningTest, we lazily re-synthesise it from the same
+ * script. This means the user's cached listening test stays usable across
+ * server restarts without re-running the (expensive) content generation.
  */
-router.get("/audio/:testId/:sectionId", (req, res) => {
+router.get("/audio/:testId/:sectionId", async (req, res) => {
   try {
     const { testId, sectionId } = req.params;
-    const buffer = getListeningAudio(testId, sectionId);
+    let buffer = getListeningAudio(testId, sectionId);
+
+    if (!buffer) {
+      const cachedSection = getCachedSection(testId, sectionId);
+      if (cachedSection) {
+        try {
+          const sectionIndex = Math.max(0, parseInt(cachedSection.id, 10) - 1) || 0;
+          let regen = null;
+          if (
+            Array.isArray(cachedSection.dialogueScript) &&
+            cachedSection.dialogueScript.length
+          ) {
+            regen = await generateDialogueAudio(
+              cachedSection.dialogueScript,
+              cachedSection,
+              sectionIndex
+            );
+          } else if (cachedSection.listeningScript) {
+            regen = await generateMonologueAudio(
+              cachedSection.listeningScript,
+              cachedSection,
+              sectionIndex
+            );
+          }
+          if (regen) {
+            setListeningAudio(testId, sectionId, regen);
+            buffer = regen;
+          }
+        } catch (regenErr) {
+          console.warn(
+            `[listening] On-demand TTS rebuild failed for ${testId}/${sectionId}:`,
+            regenErr.message
+          );
+        }
+      }
+    }
+
     if (!buffer) {
       res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
       return res.status(404).send("Audio not found");
@@ -528,8 +608,6 @@ Generate one complete IELTS Listening test that follows the real exam format exa
         }
       }
 
-      delete section.listeningScript;
-      delete section.dialogueScript;
     }
 
     const totalQuestions = sections.reduce(
@@ -539,6 +617,11 @@ Generate one complete IELTS Listening test that follows the real exam format exa
     );
 
     console.log("✅ AI Listening test generated successfully with TTS");
+
+    // Keep the scripts so the generation cache (in Firestore) can later be
+    // used to rebuild audio on demand. We send the same payload back to the
+    // client; the client just doesn't render those fields.
+    registerCachedListeningTest({ testId, sections });
 
     return res.json({
       success: true,
@@ -606,3 +689,6 @@ function buildFallbackResponse(baseUrl = "") {
 }
 
 module.exports = router;
+// Helpers used by the generation-cache route so cached listening tests can
+// rebuild their audio without re-running content generation.
+module.exports.registerCachedListeningTest = registerCachedListeningTest;

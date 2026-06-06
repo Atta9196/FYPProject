@@ -3,6 +3,11 @@ import AppLayout from "../components/Layout";
 import Panel from "../components/ui/Panel";
 import { useAuth } from "../contexts/AuthContext";
 import { getStorageKeyForModule } from "../services/progressService";
+import {
+    clearCachedGeneration,
+    getCachedGeneration,
+    saveCachedGeneration,
+} from "../services/api/generationCacheApi";
 
 function getStorageKey(userId) {
     return getStorageKeyForModule('listening', userId) || "ielts-listening-history";
@@ -216,45 +221,83 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
         ? import.meta.env.VITE_API_BASE_URL
         : "https://ielts-coach-backend.onrender.com";
 
-    // Load AI-generated listening test
-    const loadAIGeneratedListening = useCallback(async () => {
+    // Apply a payload (cached or fresh) to component state.
+    const applyListeningPayload = useCallback((payload) => {
+        const sections = payload?.sections || [];
+        if (!sections.length) return false;
+        setListeningSections(sections);
+        setTotalListeningQuestions(payload.totalQuestions || 40);
+
+        const initialStates = sections.reduce((acc, section) => {
+            acc[section.id] = defaultSectionState(section);
+            return acc;
+        }, {});
+        setSectionStates(initialStates);
+        setActiveSectionId(sections[0].id);
+        if (embedded && typeof onReady === "function") onReady();
+        return true;
+    }, [embedded, onReady]);
+
+    /**
+     * Cache-first listening loader.
+     *   force=false → return cached test if present (audio is lazily rebuilt
+     *                 server-side via the script cache so revisits don't
+     *                 re-call OpenAI for content)
+     *   force=true  → ignore cache and regenerate (Regenerate button)
+     */
+    const loadAIGeneratedListening = useCallback(async ({ force = false } = {}) => {
         try {
             setGenerating(true);
             setErrorMessage(null);
-            
+
+            if (!force) {
+                const cached = await getCachedGeneration("listening");
+                if (cached && applyListeningPayload(cached)) {
+                    return;
+                }
+            } else {
+                await clearCachedGeneration("listening");
+            }
+
             const response = await fetch(`${apiBase}/api/listening/generate`);
             const data = await response.json();
-            
+
             if (data.success && data.sections) {
-                const sections = data.sections;
-                setListeningSections(sections);
-                setTotalListeningQuestions(data.totalQuestions || 40);
-                
-                // Initialize section states
-                const initialStates = sections.reduce((acc, section) => {
-                    acc[section.id] = defaultSectionState(section);
-                    return acc;
-                }, {});
-                setSectionStates(initialStates);
-                
-                // Set first section as active
-                if (sections.length > 0) {
-                    setActiveSectionId(sections[0].id);
-                }
-                if (embedded && typeof onReady === "function") onReady();
+                applyListeningPayload(data);
+                // Cache the freshly generated test. The server will retain
+                // the dialogue/listening scripts in Firestore so audio can
+                // be rebuilt on demand later without re-running content
+                // generation.
+                saveCachedGeneration("listening", {
+                    success: true,
+                    testId: data.testId,
+                    sections: data.sections,
+                    totalQuestions: data.totalQuestions || 40,
+                });
             } else {
                 throw new Error(data.error || "Failed to generate listening test");
             }
         } catch (error) {
             console.error("Error loading AI listening test:", error);
+            if (force) {
+                try {
+                    const fallback = await getCachedGeneration("listening");
+                    if (fallback && applyListeningPayload(fallback)) {
+                        setErrorMessage(
+                            "Couldn't generate a new listening test. Restored your previous one."
+                        );
+                        return;
+                    }
+                } catch {}
+            }
             setErrorMessage("Failed to generate listening test. Please try again.");
         } finally {
             setGenerating(false);
             setLoading(false);
         }
-    }, [apiBase, embedded, onReady]);
+    }, [apiBase, applyListeningPayload]);
 
-    // Load initial listening test on mount
+    // Load initial listening test on mount (cache-first).
     useEffect(() => {
         loadAIGeneratedListening();
     }, [loadAIGeneratedListening]);
@@ -569,7 +612,7 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                     )}
                     <div className="text-center">
                         <button
-                            onClick={loadAIGeneratedListening}
+                            onClick={() => loadAIGeneratedListening({ force: true })}
                             disabled={generating}
                             className="px-6 py-3 bg-sky-600 text-white rounded-lg font-semibold hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -625,7 +668,7 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <button
-                            onClick={loadAIGeneratedListening}
+                            onClick={() => loadAIGeneratedListening({ force: true })}
                             disabled={generating}
                             className="px-3 sm:px-4 py-2 text-sm font-medium rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                         >

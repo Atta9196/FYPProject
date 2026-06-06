@@ -92,6 +92,7 @@ app.get("/", (_req, res) => {
       listening: "/api/listening",
       chatbot: "/api/chatbot",
       progress: "/api/progress",
+      generationCache: "/api/generation-cache",
     },
   });
 });
@@ -210,6 +211,12 @@ app.use("/api/chatbot", chatbotRoutes);
 // Progress storage routes (per-user history persisted in Firestore)
 const progressRoutes = require("./routes/progressRoutes");
 app.use("/api/progress", progressRoutes);
+
+// Cache for AI-generated practice content (Reading / Listening / Writing /
+// Speaking). Lets each practice page load instantly on revisit without
+// re-calling OpenAI.
+const generationCacheRoutes = require("./routes/generationCacheRoutes");
+app.use("/api/generation-cache", generationCacheRoutes);
 
 // Import OpenAI for voice conversation
 const OpenAI = require('openai');

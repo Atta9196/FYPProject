@@ -4,6 +4,11 @@ import Panel from "../components/ui/Panel";
 import { useAuth } from "../contexts/AuthContext";
 import { getStorageKeyForModule } from "../services/progressService";
 import {
+    clearCachedGeneration,
+    getCachedGeneration,
+    saveCachedGeneration,
+} from "../services/api/generationCacheApi";
+import {
     getRandomReadingSet,
     readingBandTable,
     readingPassageSets
@@ -332,43 +337,81 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
         setHistory(userHistory);
     }, [user]);
 
-    // Load AI-generated reading test
-    const loadAIGeneratedReading = useCallback(async () => {
+    // Apply a payload (from cache or fresh generation) to component state.
+    const applyReadingSet = useCallback((readingSet) => {
+        setAvailableSets([readingSet]);
+        setSelectedSetId(readingSet.id);
+        setActiveSet(readingSet);
+        setTimerStatus("idle");
+        setTimeRemaining(TIMER_SECONDS);
+        setAnswers({});
+        setSubmitted(false);
+        setSubmitting(false);
+        setResults(null);
+        setHighlights([]);
+        if (embedded && typeof onReady === "function") onReady();
+    }, [embedded, onReady]);
+
+    /**
+     * Cache-first loader:
+     *   force=false → use cached reading set if present, otherwise generate
+     *                 fresh and cache it
+     *   force=true  → ignore cache, regenerate, overwrite cache (Regenerate)
+     * On OpenAI failure, falls back to the existing cached set so the user is
+     * never left with a blank screen.
+     */
+    const loadAIGeneratedReading = useCallback(async ({ force = false } = {}) => {
         try {
             setGenerating(true);
             setErrorMessage(null);
-            
-            const response = await fetch('https://ielts-coach-backend.onrender.com/api/reading/generate');
+
+            if (!force) {
+                const cached = await getCachedGeneration("reading");
+                if (cached?.readingSet) {
+                    applyReadingSet(cached.readingSet);
+                    return;
+                }
+            } else {
+                // best-effort clear; we'll overwrite right after generation
+                await clearCachedGeneration("reading");
+            }
+
+            const response = await fetch(
+                "https://ielts-coach-backend.onrender.com/api/reading/generate"
+            );
             const data = await response.json();
-            
+
             if (data.success && data.readingSet) {
-                const newSet = data.readingSet;
-                setAvailableSets([newSet]);
-                setSelectedSetId(newSet.id);
-                setActiveSet(newSet);
-                
-                // Reset test state
-                setTimerStatus("idle");
-                setTimeRemaining(TIMER_SECONDS);
-                setAnswers({});
-                setSubmitted(false);
-                setSubmitting(false);
-                setResults(null);
-                setHighlights([]);
-                if (embedded && typeof onReady === "function") onReady();
+                applyReadingSet(data.readingSet);
+                // Persist for the next visit. Silent on failure.
+                saveCachedGeneration("reading", { readingSet: data.readingSet });
             } else {
                 throw new Error(data.error || "Failed to generate reading test");
             }
         } catch (error) {
             console.error("Error loading AI reading test:", error);
+            // If we're regenerating and it failed, try to fall back to
+            // existing cached content so the user isn't blocked.
+            if (force) {
+                try {
+                    const fallback = await getCachedGeneration("reading");
+                    if (fallback?.readingSet) {
+                        applyReadingSet(fallback.readingSet);
+                        setErrorMessage(
+                            "Couldn't generate a new test. Restored your previous one."
+                        );
+                        return;
+                    }
+                } catch {}
+            }
             setErrorMessage("Failed to generate reading test. Please try again.");
         } finally {
             setGenerating(false);
             setLoading(false);
         }
-    }, [embedded, onReady]);
+    }, [applyReadingSet]);
 
-    // Load initial reading test on mount
+    // Load initial reading test on mount (cache-first).
     useEffect(() => {
         loadAIGeneratedReading();
     }, [loadAIGeneratedReading]);
@@ -441,7 +484,7 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
     );
 
     const handleGenerateNew = useCallback(() => {
-        loadAIGeneratedReading();
+        loadAIGeneratedReading({ force: true });
     }, [loadAIGeneratedReading]);
 
     const handleModeChange = useCallback((value) => {
