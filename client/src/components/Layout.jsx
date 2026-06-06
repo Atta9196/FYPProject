@@ -45,7 +45,11 @@ export function AppLayout({ children }) {
     }, [sidebarOpen]);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 text-gray-900 dark:text-slate-100 relative transition-colors">
+        // Desktop: lock the whole shell to the viewport so only the main
+        // content scrolls and the sidebar stays put.
+        // Mobile: keep natural page-level scrolling (better with the
+        // address-bar collapsing / pull-to-refresh behavior).
+        <div className="min-h-screen md:h-screen md:overflow-hidden flex flex-col bg-gradient-to-br from-sky-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 text-gray-900 dark:text-slate-100 relative transition-colors">
             {/* Decorative gradient blobs */}
             <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
                 <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-blue-200/40 dark:bg-indigo-900/30 blur-3xl" />
@@ -61,11 +65,11 @@ export function AppLayout({ children }) {
                 />
             )}
 
-            <div className="flex min-h-screen">
+            <div className="flex min-h-screen md:min-h-0 md:flex-1 md:overflow-hidden">
                 <aside
-                    className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex-col bg-white dark:bg-slate-800 backdrop-blur-xl border-r border-slate-200/70 dark:border-slate-700 shadow-xl md:shadow-sm transition-transform duration-300 ease-out md:sticky md:top-0 md:z-auto md:flex md:h-screen md:translate-x-0 md:overflow-y-auto md:bg-white/70 dark:md:bg-slate-800/90 pl-safe ${sidebarOpen ? 'flex translate-x-0' : 'hidden -translate-x-full md:flex'}`}
+                    className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex-col bg-white dark:bg-slate-800 backdrop-blur-xl border-r border-slate-200/70 dark:border-slate-700 shadow-xl md:shadow-sm transition-transform duration-300 ease-out md:static md:z-auto md:flex md:h-full md:shrink-0 md:translate-x-0 md:bg-white/70 dark:md:bg-slate-800/90 pl-safe ${sidebarOpen ? 'flex translate-x-0' : 'hidden -translate-x-full md:flex'}`}
                 >
-                    <div className="h-16 flex items-center justify-between gap-3 px-4 sm:px-6 border-b border-slate-200 dark:border-slate-700 pt-safe">
+                    <div className="h-16 flex items-center justify-between gap-3 px-4 sm:px-6 border-b border-slate-200 dark:border-slate-700 pt-safe shrink-0">
                         <Link to="/" className="flex items-center gap-3 min-w-0" onClick={() => setSidebarOpen(false)}>
                             <img
                                 src="/IeltsCoach logo.jpeg"
@@ -85,7 +89,7 @@ export function AppLayout({ children }) {
                             </svg>
                         </button>
                     </div>
-                    <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+                    <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto overscroll-contain">
                         <Section label="Overview" />
                         <SideLink to="/dashboard" icon={ChartIcon} label="Dashboard" onNavigate={() => setSidebarOpen(false)} />
                         <SideLink to="/performance" icon={InsightsIcon} label="Performance" onNavigate={() => setSidebarOpen(false)} />
@@ -103,12 +107,12 @@ export function AppLayout({ children }) {
                         <SideLink to="/profile" icon={UserIcon} label="Profile" onNavigate={() => setSidebarOpen(false)} />
                         <SideLink to="/support" icon={HelpIcon} label="Support" onNavigate={() => setSidebarOpen(false)} />
                     </nav>
-                    <div className="p-4 pb-safe text-xs text-slate-500 dark:text-slate-400">© {new Date().getFullYear()} IELTS Coach</div>
+                    <div className="p-4 pb-safe text-xs text-slate-500 dark:text-slate-400 shrink-0">© {new Date().getFullYear()} IELTS Coach</div>
                 </aside>
 
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 flex flex-col min-w-0 md:min-h-0 md:overflow-hidden">
                     <Topbar onOpenSidebar={() => setSidebarOpen(true)} sidebarOpen={sidebarOpen} />
-                    <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 relative dark:bg-slate-900/50 transition-colors min-w-0">
+                    <main className="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 relative dark:bg-slate-900/50 transition-colors min-w-0 md:min-h-0 md:overflow-y-auto overscroll-contain">
                         {children}
                         <FloatingChatButton />
                     </main>
@@ -209,7 +213,7 @@ function Topbar({ onOpenSidebar, sidebarOpen }) {
 
     return (
         <>
-            <header className="h-16 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-700 flex items-center justify-between gap-2 px-3 sm:px-4 md:px-6 shrink-0 transition-colors sticky top-0 z-30 pt-safe">
+            <header className="h-16 bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-700 flex items-center justify-between gap-2 px-3 sm:px-4 md:px-6 shrink-0 transition-colors sticky top-0 z-30 md:static pt-safe">
                 <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                     <button
                         type="button"
