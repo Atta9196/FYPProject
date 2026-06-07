@@ -288,6 +288,44 @@ function blueprintFor(sectionId) {
     return SECTION_BLUEPRINT[sectionId] || SECTION_BLUEPRINT[1];
 }
 
+/**
+ * Map any AI-returned `question.type` string to one of the three canonical
+ * values the UI renders: "multiple" | "matching" | "fill".
+ *
+ * Why: the OpenAI model sometimes emits variants like "multiple-choice",
+ * "mcq", "matching-information", "note-completion", "sentence-completion",
+ * etc. Without this mapping, anything that isn't exactly "multiple" or
+ * "matching" falls through to the text-input renderer — so MCQs disappear
+ * even though they were generated. This runs on every load (including for
+ * already-cached tests) so it fixes both new and old generations.
+ */
+function canonicalizeQuestionType(rawType, hasOptions) {
+    const t = String(rawType || "").toLowerCase().trim();
+    if (!t) return hasOptions ? "multiple" : "fill";
+    if (/match/.test(t)) return "matching";
+    if (/multi|mcq|choice|choose/.test(t)) return "multiple";
+    if (
+        /fill|blank|complet|short|note|form|table|summary|flow|sentence|label|map|diagram/.test(
+            t
+        )
+    ) {
+        // Map labelling that uses A/B/C options is really a matching question
+        if (hasOptions && /label|map|diagram|match/.test(t)) return "matching";
+        return hasOptions ? "multiple" : "fill";
+    }
+    return hasOptions ? "multiple" : "fill";
+}
+
+function normalizeSectionsForUI(sections) {
+    return (sections || []).map((section) => ({
+        ...section,
+        questions: (section.questions || []).map((q) => {
+            const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+            return { ...q, type: canonicalizeQuestionType(q.type, hasOptions) };
+        }),
+    }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main view
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +370,7 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
     // ── Loaders ──────────────────────────────────────────────────────────────
 
     const applyListeningPayload = useCallback((payload) => {
-        const sections = payload?.sections || [];
+        const sections = normalizeSectionsForUI(payload?.sections || []);
         if (!sections.length) return false;
 
         setListeningSections(sections);

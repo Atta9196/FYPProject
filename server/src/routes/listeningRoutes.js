@@ -190,6 +190,31 @@ async function generateMonologueAudio(listeningScript, section, index) {
   return synthesizeLongText(text, "alloy");
 }
 
+/**
+ * Map any AI-returned `type` string to one of three canonical values the
+ * client UI knows how to render: "multiple" | "matching" | "fill".
+ * The model often emits "multiple-choice", "mcq", "matching-information",
+ * "note-completion", "sentence-completion", "map-labelling" etc. — without
+ * this mapping those questions silently fall through to the plain text
+ * input renderer so MCQs / matching dropdowns never appear in the UI.
+ */
+function canonicalizeType(rawType, hasOptions) {
+  const t = String(rawType || "").toLowerCase().trim();
+  if (!t) return hasOptions ? "multiple" : "fill";
+  // map-labelling / diagram-labelling with options is matching in IELTS UI
+  if (/match/.test(t)) return "matching";
+  if (/multi|mcq|choice|choose/.test(t)) return "multiple";
+  if (hasOptions && /(label|map|diagram)/.test(t)) return "matching";
+  if (
+    /fill|blank|complet|short|note|form|table|summary|flow|sentence|label|map|diagram/.test(
+      t
+    )
+  ) {
+    return hasOptions ? "multiple" : "fill";
+  }
+  return hasOptions ? "multiple" : "fill";
+}
+
 function normalizeQuestion(q, qi) {
   if (!q) return null;
 
@@ -211,9 +236,13 @@ function normalizeQuestion(q, qi) {
         .filter((o) => o.value || o.label)
     : [];
 
+  const hasOptions = options.length > 0;
+  const canonicalType = canonicalizeType(q.type, hasOptions);
+
   return {
     ...q,
     id: typeof q.id === "number" ? q.id : qi + 1,
+    type: canonicalType,
     prompt: rawPrompt,
     answer: Array.isArray(answerVal) ? answerVal[0] : answerVal,
     options: options.length ? options : q.options,
@@ -513,9 +542,23 @@ Use "listeningScript": one continuous paragraph (lecture) with natural academic 
 Question types allowed: note completion, summary completion, flowchart completion, table completion.
 Do NOT include: dialogue, map labeling, choose-two questions.
 
+JSON "type" FIELD — STRICT VOCABULARY (CRITICAL)
+For every question object, the "type" field MUST be EXACTLY one of these three lowercase strings — no variants, no hyphens, no prefixes:
+  • "multiple"  → multiple-choice question. MUST include an "options" array of at least 3 entries shaped {"value":"A","label":"..."} and "answer" must equal one of those values ("A", "B", "C", ...).
+  • "matching"  → matching question (including matching opinions and map / plan / diagram labelling). MUST include an "options" array and "answer" must equal one of the option values.
+  • "fill"      → every form, note, table, summary, flowchart, sentence, or short-answer completion question. "answer" is a string (or array of acceptable strings).
+Do NOT invent any other type string such as "multiple-choice", "mcq", "matching-information", "note-completion", "sentence-completion", "map-labelling", etc. Use only "multiple", "matching", or "fill".
+
+REQUIRED QUESTION-TYPE MIX PER SECTION (CRITICAL — match the official IELTS pattern)
+  • Section 1 (Q1–Q10):  8–10 "fill"; 0–2 "multiple"; 0 "matching".
+  • Section 2 (Q11–Q20): 4–5 "multiple"; 3–4 "matching" (include at least one map / location labelling); 1–2 "fill".
+  • Section 3 (Q21–Q30): 4–5 "multiple"; 2–3 "matching"; 2–3 "fill".
+  • Section 4 (Q31–Q40): 8–10 "fill"; 0–2 "multiple"; 0 "matching".
+The total of 40 questions must include AT LEAST 8 "multiple" and AT LEAST 5 "matching" questions across Sections 2 and 3 combined.
+
 RETURN STRUCTURE (JSON only, no markdown)
 Each section must contain: id, title, context, durationSeconds (300), reviewSeconds (30), questionRange, and either dialogueScript (S1, S3) or listeningScript (S2, S4), plus exactly 10 questions in "questions" array.
-Each question: id, type, prompt, instructions (optional), options (for multiple choice/matching), answer, explanation (optional). For form/note/table completion or short-answer questions, always include "instructions" (e.g. "Write ONE WORD ONLY." or "Write NO MORE THAN TWO WORDS AND/OR A NUMBER.") and "maxWords" (1 or 2) so students know the word limit.
+Each question: id, type, prompt, instructions (optional), options (for multiple choice/matching), answer, explanation (optional). For "fill" questions, always include "instructions" (e.g. "Write ONE WORD ONLY." or "Write NO MORE THAN TWO WORDS AND/OR A NUMBER.") and "maxWords" (1 or 2) so students know the word limit. For "multiple" and "matching" questions, ALWAYS include the "options" array.
 
 {
   "sections": [
@@ -532,6 +575,14 @@ Generate one complete IELTS Listening test that follows the real exam format exa
 - Exactly 4 sections; exactly 10 questions per section; 40 questions total.
 - Section 1: full social conversation (dialogueScript). Section 2: full public monologue (listeningScript), include at least one map/location question. Section 3: full academic discussion (dialogueScript), include "choose TWO" and matching opinions. Section 4: full academic lecture (listeningScript).
 - For each section: first write a complete, realistic scenario (conversation or lecture) with natural speech, context, extra details, and filler phrases. Do not write short sentences that only state answers. Then create the 10 questions based on information that appears naturally in that script. Never mention questions or options in the script. Each script must be long enough for ~4–5 minutes of audio and must feel like a real recording.
+- Question "type" field must be EXACTLY "multiple", "matching", or "fill" — no other strings.
+- Per-section type mix (mandatory, matches the official IELTS exam):
+    Section 1 → 8–10 "fill", 0–2 "multiple", 0 "matching".
+    Section 2 → 4–5 "multiple", 3–4 "matching" (one MUST be a map/location label), 1–2 "fill".
+    Section 3 → 4–5 "multiple", 2–3 "matching", 2–3 "fill".
+    Section 4 → 8–10 "fill", 0–2 "multiple", 0 "matching".
+- Across the whole test there must be AT LEAST 8 "multiple" and AT LEAST 5 "matching" questions. Do not return a test that is mostly "fill" — that is incorrect IELTS structure.
+- Every "multiple" and "matching" question MUST include an "options" array of 3+ entries shaped {"value":"A","label":"..."} and an "answer" equal to one of the option values.
 `.trim();
 
     const completion = await openai.chat.completions.create({
