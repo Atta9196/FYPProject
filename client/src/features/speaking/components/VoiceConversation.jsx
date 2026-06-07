@@ -35,6 +35,13 @@ export function VoiceConversation({ onEndSession }) {
     const realtimeAudioRef = useRef(null);
     const processingTimeoutRef = useRef(null); // Timeout for processing response
     const lastAudioSentTimeRef = useRef(null); // Track when audio was last sent
+    // Total time (seconds) the candidate spent actually speaking during this
+    // realtime session. Computed from server-VAD speech-started/stopped events.
+    // Sent to /realtime/end so the scoring service can enforce the < 20s and
+    // < 30 word caps fairly (was missing before — that's how "2 words → band 7"
+    // slipped through).
+    const userSpeakingDurationRef = useRef(0);
+    const userSpeechStartedAtRef = useRef(null);
     // Enable Realtime API by default for better experience, can be disabled via env var
     const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME !== 'false');
 
@@ -544,11 +551,21 @@ export function VoiceConversation({ onEndSession }) {
                         onTranscriptionUpdate: (data) => {
                             // Handle real-time transcription updates from server VAD
                             if (data.speechStarted) {
+                                userSpeechStartedAtRef.current = Date.now();
                                 setStatusBanner('🎤 Listening…');
                                 setRealtimeTranscript('');
                                 return;
                             }
                             if (data.speechStopped) {
+                                if (userSpeechStartedAtRef.current) {
+                                    const segSec = Math.max(
+                                        0,
+                                        (Date.now() - userSpeechStartedAtRef.current) / 1000
+                                    );
+                                    userSpeakingDurationRef.current =
+                                        (userSpeakingDurationRef.current || 0) + segSec;
+                                    userSpeechStartedAtRef.current = null;
+                                }
                                 setStatusBanner('⏳ Transcribing…');
                                 return;
                             }
@@ -1196,7 +1213,14 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const endVoiceSession = () => {
+        // Cut the AI off mid-sentence so the call closes immediately and
+        // does NOT play a goodbye line / score reveal through the speakers.
         if (useRealtime && realtimeRef.current) {
+            try {
+                if (typeof realtimeRef.current.interrupt === 'function') {
+                    realtimeRef.current.interrupt();
+                }
+            } catch {}
             realtimeRef.current.stop().catch(() => {});
             realtimeRef.current = null;
         }
@@ -1206,6 +1230,17 @@ export function VoiceConversation({ onEndSession }) {
                 realtimeAudioRef.current.srcObject = null;
             } catch {}
             realtimeAudioRef.current = null;
+        }
+
+        // Roll up a partial speech segment that hadn't been "stopped" yet.
+        if (userSpeechStartedAtRef.current) {
+            const segSec = Math.max(
+                0,
+                (Date.now() - userSpeechStartedAtRef.current) / 1000
+            );
+            userSpeakingDurationRef.current =
+                (userSpeakingDurationRef.current || 0) + segSec;
+            userSpeechStartedAtRef.current = null;
         }
         // Stop voice activity detection
         if (voiceDetectionRef.current) {
@@ -1256,12 +1291,17 @@ export function VoiceConversation({ onEndSession }) {
         // Don't wipe userTranscript / currentMessage / conversationHistory so
         // the user can still see the last reply after the session ends.
 
-        // Notify parent so it can trigger AI evaluation and save band score
+        // Notify parent so it can trigger AI evaluation and save band score.
+        // userSpeakingDurationSec is what /realtime/end uses to enforce IELTS
+        // length caps (< 20s → max band 3, < 30 words → max band 3.5, etc).
+        const totalUserSpeakingSec = Number(userSpeakingDurationRef.current || 0);
+        userSpeakingDurationRef.current = 0;
         if (typeof onEndSession === 'function') {
             try {
                 onEndSession({
                     sessionId,
                     conversationHistory,
+                    userSpeakingDurationSec: totalUserSpeakingSec,
                 });
             } catch (err) {
                 console.warn('onEndSession handler failed:', err);

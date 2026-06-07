@@ -1039,198 +1039,345 @@ function extractBandScoreFromFeedback(feedback, userMessageCount = 0) {
  */
 router.post("/realtime/end", async (req, res) => {
   try {
-    // Validate request body
     if (!req.body) {
-      console.error("❌ Request body is undefined");
       return res.status(400).json({
+        success: false,
         error: "Request body is required",
-        message: "Please send a JSON body with sessionId",
-        success: false
       });
     }
-    
-    const { sessionId, conversationHistory = [], userId } = req.body;
-    
-    // Validate required fields
+
+    const {
+      sessionId,
+      conversationHistory = [],
+      userId,
+      userSpeakingDurationSec,
+    } = req.body;
+
     if (!sessionId) {
-      console.error("❌ sessionId is missing");
       return res.status(400).json({
+        success: false,
         error: "sessionId is required",
-        message: "Please provide a sessionId in the request body",
-        success: false
       });
     }
-    
-    const userMessages = conversationHistory.filter((msg) => msg.role === "user");
 
-    console.log("🏁 Ending real-time conversation session...");
-    console.log("📋 Request body:", { sessionId, userId, conversationHistoryLength: conversationHistory?.length || 0 });
-    
-    // Fallback feedback templates
-    const getFallbackFeedback = (conversationHistory) => {
-      const messageCount = userMessages.length;
+    console.log("🏁 Ending realtime session for scoring:", {
+      sessionId,
+      userId,
+      messages: conversationHistory.length,
+      userDuration: userSpeakingDurationSec,
+    });
 
-      let feedback = "Thank you for completing this IELTS speaking practice session!\n\n";
-      
-      if (messageCount >= 5) {
-        feedback += "**Overall Performance:** You demonstrated good engagement throughout the conversation. ";
-        feedback += "**Key Strengths:** You provided detailed responses and showed good communication skills. ";
-        feedback += "**Areas for Improvement:** Try to expand your vocabulary and use more complex sentence structures. ";
-        feedback += "**Estimated Band Score:** 6.5-7.0";
-      } else if (messageCount >= 3) {
-        feedback += "**Overall Performance:** You participated well in the conversation. ";
-        feedback += "**Key Strengths:** You answered questions clearly and showed good understanding. ";
-        feedback += "**Areas for Improvement:** Practice speaking for longer periods and develop more detailed responses. ";
-        feedback += "**Estimated Band Score:** 6.0-6.5";
-      } else {
-        feedback += "**Overall Performance:** Good start to the conversation. ";
-        feedback += "**Key Strengths:** You responded appropriately to questions. ";
-        feedback += "**Areas for Improvement:** Try to provide longer, more detailed answers and practice speaking more fluently. ";
-        feedback += "**Estimated Band Score:** 5.5-6.0";
+    // ── Build the candidate-only transcript and conversation Q/A pairs ──
+    const userMessages = conversationHistory.filter((m) => m && m.role === "user" && typeof m.content === "string");
+    const totalTranscript = userMessages.map((m) => (m.content || "").trim()).filter(Boolean).join(" ");
+    const totalWordCount = countWords(totalTranscript);
+    const totalDurationSec = Number.isFinite(Number(userSpeakingDurationSec))
+      ? Math.max(0, Number(userSpeakingDurationSec))
+      : 0;
+
+    // Reconstruct examiner → candidate pairs so the AI can judge relevance
+    const pairs = [];
+    let pendingQ = null;
+    conversationHistory.forEach((m) => {
+      if (!m || typeof m.content !== "string") return;
+      if (m.role === "examiner") pendingQ = m.content.trim();
+      else if (m.role === "user") {
+        pairs.push({
+          question: pendingQ || "(open conversation)",
+          answer: (m.content || "").trim(),
+        });
+        pendingQ = null;
       }
-      
-      feedback += "\n\nKeep practicing to improve your IELTS speaking skills!";
-      return feedback;
+    });
+
+    const persist = (payload) => {
+      if (!db) return payload;
+      const safeScores = payload.scores || null;
+      db.collection("speaking_practice")
+        .add({
+          userId: userId || "anonymous",
+          sessionId,
+          conversationHistory,
+          feedback: payload.feedback || null,
+          bandScore: payload.bandScore ?? null,
+          scores: safeScores,
+          summary: payload.summary || null,
+          wordCount: payload.wordCount ?? null,
+          durationSec: payload.durationSec ?? null,
+          penalties: payload.penalties || {},
+          capReasons: payload.capReasons || [],
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          type: "realtime_practice",
+        })
+        .catch((err) => console.error("⚠️ Firestore save failed:", err));
+      return payload;
     };
-    
-    try {
-      // Try OpenAI first - use gpt-4o-mini for summaries (cost-effective)
-      const conversationText = conversationHistory
-        .slice(-10)
-        .map((msg) => `${msg.role}: ${msg.content}`)
-        .join("\n"); // Only last 10 messages
-      const summaryPrompt = `IELTS practice summary. Provide brief feedback:
 
-1. Overall performance
-2. Key strengths
-3. Areas for improvement
-4. Band score (6.0-9.0)
+    // ── 1) Deterministic validation across the whole session ───────────
+    // This is where the old "2 words → band 7" cheat is killed: empty,
+    // gibberish, repeated-words, very short, very brief speech all get
+    // hard caps BEFORE any AI scoring runs.
+    const validation = validateSpeakingSubmission({
+      transcript: totalTranscript,
+      audioDurationSec: totalDurationSec,
+    });
 
-Conversation:
-${conversationText}
-
-Provide concise feedback.`;
-      
-      // Use streaming to ensure we capture the full response
-      console.log("🔄 Generating summary with streaming to ensure full response...");
-      const stream = await openai.chat.completions.create({
-        model: "gpt-4o-mini", // Cost-effective for summaries
-        messages: [
-          {
-            role: "user",
-            content: summaryPrompt
-          }
-        ],
-        max_tokens: 600, // Increased to ensure full feedback is captured
-        temperature: 0.4, // Lower for more consistent summaries
-        stream: true // Use streaming to ensure full response
-      });
-
-      let fullFeedback = '';
-      let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-      
-      // Collect all chunks
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          fullFeedback += content;
-        }
-        // Track token usage if available
-        if (chunk.usage) {
-          tokenUsage = chunk.usage;
-        }
-      }
-
-      const feedback = fullFeedback.trim();
-      
-      // Log full feedback to verify it's complete
-      console.log("📊 Full summary feedback received:", feedback);
-      console.log("📊 Feedback length:", feedback.length, "characters");
-      console.log("📊 Token usage:", tokenUsage);
-      
-      // Verify feedback is not empty
-      if (!feedback || feedback.length === 0) {
-        throw new Error("Empty feedback received from OpenAI");
-      }
-      
-      // Check if feedback seems complete (ends with proper punctuation or is reasonably long)
-      const lastChar = feedback.trim().slice(-1);
-      const hasProperEnding = ['.', '!', '?'].includes(lastChar);
-      if (!hasProperEnding && feedback.length < 100) {
-        console.warn("⚠️ WARNING: Feedback may be incomplete - doesn't end with proper punctuation and is short");
-      }
-      
-      console.log("✅ Summary feedback validated and ready to send");
-      
-      // Derive numeric band score
-      const bandScore = extractBandScoreFromFeedback(feedback, userMessages.length);
-
-      // Save session to Firestore
-      if (db) {
-        try {
-          const sessionData = {
-            userId: userId || 'anonymous',
-            sessionId: sessionId,
-            conversationHistory: conversationHistory,
-            feedback: feedback,
-            bandScore,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            type: 'realtime_practice'
-          };
-          
-          await db.collection('speaking_practice').add(sessionData);
-          console.log("💾 Real-time session saved to Firestore");
-        } catch (firestoreError) {
-          console.error("⚠️ Error saving session to Firestore:", firestoreError);
-        }
-      }
-      
-      res.json({
-        feedback: feedback,
-        bandScore,
+    if (!validation.valid) {
+      const cap = Number(validation.wordCap.cap ?? 0);
+      const payload = {
         success: true,
-      });
-      
-    } catch (openaiError) {
-      console.log("⚠️ OpenAI API failed for session end, using fallback:", openaiError.message);
-      
-      // Use fallback feedback
-      const fallbackFeedback = getFallbackFeedback(conversationHistory);
-      const bandScore = extractBandScoreFromFeedback(fallbackFeedback, userMessages.length);
-      
-      // Save session to Firestore with fallback feedback
-      if (db) {
-        try {
-          const sessionData = {
-            userId: userId || 'anonymous',
-            sessionId: sessionId,
-            conversationHistory: conversationHistory,
-            feedback: fallbackFeedback,
-            bandScore,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            type: 'realtime_practice'
-          };
-          
-          await db.collection('speaking_practice').add(sessionData);
-          console.log("💾 Real-time session saved to Firestore with fallback feedback");
-        } catch (firestoreError) {
-          console.error("⚠️ Error saving session to Firestore:", firestoreError);
-        }
-      }
-      
-      res.json({
-        feedback: fallbackFeedback,
-        bandScore,
-        success: true,
+        sessionId,
+        module: "speaking-realtime",
+        transcript: totalTranscript,
+        wordCount: totalWordCount,
+        durationSec: totalDurationSec,
+        scores: { fluency: cap, lexical: cap, grammar: cap, pronunciation: cap },
+        bandScore: cap,
+        band: cap,
+        overallBand: cap,
+        penalties: { invalidSubmission: true },
+        capReasons: [validation.wordCap.reason || "Session could not be assessed."],
+        flags: { relevant: false, meaningful: false, sufficient: false },
+        feedback: {
+          fluency: `${cap} / 9 - No usable speech detected.`,
+          lexical: `${cap} / 9 - No usable speech detected.`,
+          grammar: `${cap} / 9 - No usable speech detected.`,
+          pronunciation: `${cap} / 9 - No usable speech detected.`,
+          bandScore: cap,
+        },
+        summary: {
+          reasonForScore: validation.wordCap.reason || "Session could not be assessed.",
+          strengths: [],
+          weaknesses: ["No assessable speech recorded during the session."],
+          suggestions: [
+            "Make sure your microphone works and you speak for at least 30-60 seconds per question.",
+            "Answer the examiner's question with at least 2-3 full sentences.",
+            "Avoid one-word answers — explain your reason with examples.",
+          ],
+          commonGrammarMistakes: [],
+          vocabularyImprovements: [],
+          pronunciationAdvice: [],
+        },
+      };
+      return res.json(persist(payload));
+    }
+
+    // ── 2) AI scoring across the 4 IELTS criteria ──────────────────────
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "OPENAI_API_KEY not configured",
       });
     }
-    
+
+    const transcriptForAI = pairs
+      .map((p, i) => `Q${i + 1}: ${p.question}\nA${i + 1}: ${p.answer || "(no answer)"}`)
+      .join("\n\n");
+
+    const systemPrompt = `You are a strict, fair IELTS Speaking examiner scoring a candidate based ONLY on the transcript of a real-time conversation. Use the official IELTS band descriptors. Return ONLY JSON — no markdown, no commentary.
+
+JSON SCHEMA:
+{
+  "scores": {
+    "fluency":       <0-9 in 0.5 steps>,
+    "lexical":       <0-9 in 0.5 steps>,
+    "grammar":       <0-9 in 0.5 steps>,
+    "pronunciation": <0-9 in 0.5 steps>
+  },
+  "feedback": {
+    "fluency":       "<1-2 sentences>",
+    "lexical":       "<1-2 sentences>",
+    "grammar":       "<1-2 sentences>",
+    "pronunciation": "<1-2 sentences>"
+  },
+  "strengths":   ["<2-3 specific strengths>"],
+  "weaknesses":  ["<2-3 specific weaknesses>"],
+  "suggestions": ["<3-5 concrete suggestions>"],
+  "commonGrammarMistakes":   ["<2-4 specific grammar errors the candidate made>"],
+  "vocabularyImprovements":  ["<2-4 vocabulary upgrades tied to what they said>"],
+  "pronunciationAdvice":     ["<2-3 generic pronunciation tips>"],
+  "flags": {
+    "relevant":         <true if answers actually addressed the examiner's questions>,
+    "relevance_reason": "<short reason or empty>",
+    "meaningful":       <true if the responses are meaningful>,
+    "sufficient":       <true if there is enough content to assess fairly>
+  }
+}
+
+STRICT RULES — these prevent unfair high bands:
+- One/two-word answers, partial sentences, or off-topic replies CANNOT score above band 4 on Fluency or Lexical.
+- If the candidate spoke fewer than ~30 total words, ALL four scores must be ≤ 4.
+- If answers don't address the questions, set relevant=false and keep Fluency/Lexical ≤ 4.
+- Pronunciation must be conservative (no audio is available) — cap at 7 unless the transcript reads as perfectly fluent native English.
+- Reference SPECIFIC things the candidate actually said; never write generic templates.`;
+
+    const userPrompt = `Candidate-only word count: ${totalWordCount}.
+Candidate-only speaking duration: ${Math.round(totalDurationSec)}s.
+
+REALTIME SESSION TRANSCRIPT
+===========================
+${transcriptForAI || "(no transcript)"}
+
+Return the JSON exactly per the schema. Be strict.`;
+
+    let aiResult;
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+        max_tokens: 900,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const content = completion.choices?.[0]?.message?.content;
+      if (!content) throw new Error("Empty AI scoring response");
+      aiResult = JSON.parse(content);
+    } catch (aiErr) {
+      console.error("❌ Realtime AI scoring failed:", aiErr);
+      return res.status(503).json({
+        success: false,
+        error: "AI evaluation is temporarily unavailable. Please try again.",
+      });
+    }
+
+    // ── 3) Apply post-AI IELTS caps ────────────────────────────────────
+    const scores = {
+      fluency:       clampBand(aiResult?.scores?.fluency),
+      lexical:       clampBand(aiResult?.scores?.lexical),
+      grammar:       clampBand(aiResult?.scores?.grammar),
+      pronunciation: clampBand(aiResult?.scores?.pronunciation),
+    };
+
+    const flags = {
+      relevant:        aiResult?.flags?.relevant !== false,
+      relevanceReason: typeof aiResult?.flags?.relevance_reason === "string"
+        ? aiResult.flags.relevance_reason.trim()
+        : "",
+      meaningful:      aiResult?.flags?.meaningful !== false,
+      sufficient:      aiResult?.flags?.sufficient !== false,
+    };
+
+    const rawAverage = averageBand([
+      scores.fluency,
+      scores.lexical,
+      scores.grammar,
+      scores.pronunciation,
+    ]);
+    let adjustedBand = clampBand(rawAverage) ?? 0;
+    const penalties = {};
+    const capReasons = [];
+
+    const wordCap = validation.wordCap.cap;
+    if (wordCap !== null && wordCap !== undefined && adjustedBand > wordCap) {
+      adjustedBand = wordCap;
+      penalties.lengthCap = true;
+      capReasons.push(validation.wordCap.reason);
+    }
+    if (!flags.relevant && adjustedBand > 4) {
+      adjustedBand = 4;
+      penalties.unrelatedCap = true;
+      capReasons.push(
+        flags.relevanceReason
+          ? `Answers were off-topic: ${flags.relevanceReason} (capped at band 4).`
+          : "Answers were off-topic — overall capped at band 4."
+      );
+    }
+    if (!flags.meaningful && adjustedBand > 3.5) {
+      adjustedBand = 3.5;
+      penalties.notMeaningful = true;
+      capReasons.push("Responses lacked meaningful communication — capped at band 3.5.");
+    }
+
+    const overallBand = clampBand(adjustedBand);
+
+    const fluencyText = stringOrSpeaking(aiResult?.feedback?.fluency, "No fluency feedback");
+    const lexicalText = stringOrSpeaking(aiResult?.feedback?.lexical, "No lexical feedback");
+    const grammarText = stringOrSpeaking(aiResult?.feedback?.grammar, "No grammar feedback");
+    const pronunciationText = stringOrSpeaking(
+      aiResult?.feedback?.pronunciation,
+      "Pronunciation cannot be fully assessed from text alone."
+    );
+    const feedback = {
+      fluency: `${scores.fluency ?? "-"} / 9 - ${fluencyText}`,
+      lexical: `${scores.lexical ?? "-"} / 9 - ${lexicalText}`,
+      grammar: `${scores.grammar ?? "-"} / 9 - ${grammarText}`,
+      pronunciation: `${scores.pronunciation ?? "-"} / 9 - ${pronunciationText}`,
+      bandScore: overallBand,
+    };
+
+    const fallback = summariseStrengthsWeaknesses(scores, SPEAKING_CRITERIA_LABELS);
+    const strengths = Array.isArray(aiResult?.strengths) && aiResult.strengths.length
+      ? aiResult.strengths.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : fallback.strengths;
+    const weaknesses = Array.isArray(aiResult?.weaknesses) && aiResult.weaknesses.length
+      ? aiResult.weaknesses.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : fallback.weaknesses;
+    const suggestions = Array.isArray(aiResult?.suggestions) && aiResult.suggestions.length
+      ? aiResult.suggestions.filter((s) => typeof s === "string" && s.trim()).slice(0, 6)
+      : [
+          "Develop each answer with 2-3 supporting sentences and a concrete example.",
+          "Add linking words: however, on the other hand, for example.",
+          "Use a wider range of grammar: conditionals, relative clauses, passives.",
+        ];
+    const commonGrammarMistakes = Array.isArray(aiResult?.commonGrammarMistakes)
+      ? aiResult.commonGrammarMistakes.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+      : [];
+    const vocabularyImprovements = Array.isArray(aiResult?.vocabularyImprovements)
+      ? aiResult.vocabularyImprovements.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+      : [];
+    const pronunciationAdvice = Array.isArray(aiResult?.pronunciationAdvice)
+      ? aiResult.pronunciationAdvice.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : [];
+
+    const parts = [];
+    parts.push(
+      `Overall band ${overallBand} from Fluency ${scores.fluency ?? "-"}, ` +
+      `Lexical ${scores.lexical ?? "-"}, Grammar ${scores.grammar ?? "-"}, ` +
+      `Pronunciation ${scores.pronunciation ?? "-"} (raw average ${clampBand(rawAverage) ?? "-"}).`
+    );
+    parts.push(`Total spoken words: ${totalWordCount}.`);
+    parts.push(`Total speaking duration: ${Math.round(totalDurationSec)}s.`);
+    if (capReasons.length) parts.push(...capReasons);
+    if (!capReasons.length) parts.push("No penalties applied.");
+    const reasonForScore = parts.join(" ");
+
+    const payload = {
+      success: true,
+      sessionId,
+      module: "speaking-realtime",
+      transcript: totalTranscript,
+      wordCount: totalWordCount,
+      durationSec: totalDurationSec,
+      scores,
+      bandScore: overallBand,
+      band: overallBand,
+      overallBand,
+      rawOverallBand: clampBand(rawAverage),
+      penalties,
+      capReasons,
+      flags,
+      feedback,
+      summary: {
+        reasonForScore,
+        strengths,
+        weaknesses,
+        suggestions,
+        commonGrammarMistakes,
+        vocabularyImprovements,
+        pronunciationAdvice,
+      },
+    };
+
+    return res.json(persist(payload));
   } catch (error) {
-    console.error("❌ Error ending session:", error);
-    res.status(500).json({
-      error: "Failed to end session",
+    console.error("❌ Realtime session scoring crashed:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to score the realtime session.",
       message: error.message,
-      success: false
     });
   }
 });
@@ -1962,11 +2109,18 @@ Proactive Engagement & Patience:
 - Remember: This is practice - the user may need time to think, especially at the start
 
 Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`,
+        // Also transcribe candidate audio so the client gets a live user
+        // transcript (drives the boxed feedback at the end).
+        input_audio_transcription: { model: "whisper-1" },
+        // Keep examiner replies short and natural (~1-2 sentences).
+        max_response_output_tokens: 120,
+        // Server-side VAD: a real examiner waits ~2s of silence before
+        // taking a turn so the candidate can finish their thought.
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.5, // Higher threshold for better voice detection
-          prefix_padding_ms: 300, // Capture context before user speaks
-          silence_duration_ms: 800 // Shorter silence for faster turn-taking (more natural conversation)
+          threshold: 0.55,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 2000
         }
       })
     });

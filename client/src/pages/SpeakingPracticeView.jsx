@@ -36,6 +36,136 @@ function saveHistory(entries, userId) {
     window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Boxed feedback shown after a Realtime Voice session ends.
+// Mirrors the IELTS Exam result layout: one big overall band card, four
+// criteria boxes, strengths / weaknesses / suggestions cards, plus optional
+// grammar / vocabulary / pronunciation tips and a "why this score" line.
+// ─────────────────────────────────────────────────────────────────────────────
+function VoiceSessionSummary({ summary, onClose }) {
+    if (!summary) return null;
+    const { bandScore, scores, feedback, summary: s, capReasons, transcript, wordCount, durationSec } = summary;
+    const bandDisplay = typeof bandScore === "number" ? bandScore.toFixed(1) : "--";
+    const criteria = [
+        { key: "fluency", label: "Fluency & Coherence" },
+        { key: "lexical", label: "Lexical Resource" },
+        { key: "grammar", label: "Grammatical Range & Accuracy" },
+        { key: "pronunciation", label: "Pronunciation" },
+    ];
+
+    const ToneCard = ({ title, items, tone, fallback }) => {
+        const ring = {
+            emerald: "border-emerald-200 bg-emerald-50/70 text-emerald-900",
+            rose: "border-rose-200 bg-rose-50/70 text-rose-900",
+            sky: "border-sky-200 bg-sky-50/70 text-sky-900",
+            violet: "border-violet-200 bg-violet-50/70 text-violet-900",
+            amber: "border-amber-200 bg-amber-50/70 text-amber-900",
+            indigo: "border-indigo-200 bg-indigo-50/70 text-indigo-900",
+        }[tone] || "border-slate-200 bg-slate-50/70 text-slate-900";
+        const list = Array.isArray(items) ? items.filter((i) => typeof i === "string" && i.trim()) : [];
+        return (
+            <div className={`rounded-2xl border ${ring} p-4`}>
+                <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{title}</p>
+                {list.length > 0 ? (
+                    <ul className="mt-2 space-y-1 text-sm">
+                        {list.map((it, i) => <li key={i}>• {it}</li>)}
+                    </ul>
+                ) : (
+                    <p className="mt-2 text-sm opacity-70">{fallback || "Nothing specific to highlight."}</p>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <div className="space-y-5">
+            <div className="bg-white rounded-2xl shadow p-5 sm:p-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-center border border-slate-200">
+                <div className="md:col-span-2 text-center md:text-left">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Overall Speaking Band</p>
+                    <p className="text-5xl font-extrabold text-emerald-600">{bandDisplay}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                        {wordCount ?? 0} spoken words across {Math.round(durationSec || 0)}s
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1">Saved to dashboard & performance history.</p>
+                </div>
+                <div className="md:col-span-3 grid grid-cols-2 gap-2">
+                    {criteria.map((c) => (
+                        <div key={c.key} className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
+                            <p className="text-[11px] text-slate-500 uppercase tracking-wide">{c.label}</p>
+                            <p className="text-xl font-bold text-slate-800">
+                                {scores?.[c.key] != null ? Number(scores[c.key]).toFixed(1) : "—"}
+                                <span className="text-xs text-slate-400 font-normal"> / 9</span>
+                            </p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {s?.reasonForScore && (
+                <div className="bg-white rounded-2xl shadow p-5 text-sm text-slate-700 border border-slate-200">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Why this score?
+                    </p>
+                    <p className="mt-1">{s.reasonForScore}</p>
+                    {Array.isArray(capReasons) && capReasons.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs text-amber-700">
+                            {capReasons.map((r) => <li key={r}>⚠ {r}</li>)}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <ToneCard title="Strengths" items={s?.strengths} tone="emerald" />
+                <ToneCard title="Weaknesses" items={s?.weaknesses} tone="rose" />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <ToneCard title="Suggestions" items={s?.suggestions} tone="sky" />
+                <ToneCard title="Common Grammar Mistakes" items={s?.commonGrammarMistakes} tone="violet" fallback="No specific patterns flagged." />
+                <ToneCard title="Vocabulary Improvements" items={s?.vocabularyImprovements} tone="amber" fallback="No specific upgrades suggested." />
+            </div>
+
+            <ToneCard title="Pronunciation Advice" items={s?.pronunciationAdvice} tone="indigo" fallback="No specific pronunciation notes." />
+
+            {feedback && (
+                <div className="bg-white rounded-2xl shadow p-5 border border-slate-200 space-y-2">
+                    <p className="text-sm font-semibold text-slate-800">Per-criterion feedback</p>
+                    {Object.entries(feedback)
+                        .filter(([k]) => k !== "bandScore")
+                        .map(([k, text]) => (
+                            <div key={k} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                                <p className="text-[11px] uppercase tracking-wide text-slate-500">{k}</p>
+                                <p className="text-sm text-slate-700 mt-1">{text}</p>
+                            </div>
+                        ))}
+                </div>
+            )}
+
+            {transcript && (
+                <div className="bg-white rounded-2xl shadow p-5 border border-slate-200">
+                    <p className="text-sm font-semibold text-slate-800 mb-2">Your full transcript</p>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                        {transcript}
+                    </div>
+                </div>
+            )}
+
+            {onClose && (
+                <div className="flex justify-end">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-semibold hover:bg-slate-200 border border-slate-200"
+                    >
+                        Close feedback
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function SpeakingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     // Mode selection state
@@ -440,37 +570,51 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
         }
     };
 
-    // End real-time voice session (voice mode) via callback from VoiceConversation
-    const handleVoiceSessionEnd = async ({ sessionId, conversationHistory }) => {
+    // End real-time voice session (voice mode) via callback from VoiceConversation.
+    // The new /realtime/end endpoint returns a full IELTS scoring payload
+    // (4 criteria, caps applied, structured summary) — same shape as the
+    // IELTS Exam Simulation endpoint — so we just store the whole thing.
+    const handleVoiceSessionEnd = async ({
+        sessionId,
+        conversationHistory,
+        userSpeakingDurationSec,
+    }) => {
         try {
             setIsVoiceEvaluating(true);
-            const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/realtime/end', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    sessionId,
-                    conversationHistory,
-                    userId: user?.email || user?.id || 'current-user'
-                })
-            });
+            const response = await fetch(
+                'https://ielts-coach-backend.onrender.com/api/speaking/realtime/end',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId,
+                        conversationHistory,
+                        userSpeakingDurationSec,
+                        userId: user?.email || user?.id || 'current-user',
+                    }),
+                }
+            );
 
             const data = await response.json();
 
             if (data.success) {
-                // Prefer numeric bandScore from API; fallback to parsing
-                let bandScore = 0;
-                if (typeof data.bandScore === "number" && !Number.isNaN(data.bandScore)) {
-                    bandScore = data.bandScore;
-                } else {
-                    const bandScoreMatch = data.feedback?.match(/band\s*score[:\s]*([0-9.]+)/i);
-                    bandScore = bandScoreMatch ? parseFloat(bandScoreMatch[1]) : 0;
-                }
+                const bandScore =
+                    typeof data.bandScore === 'number' && !Number.isNaN(data.bandScore)
+                        ? data.bandScore
+                        : 0;
 
                 setVoiceSessionSummary({
                     bandScore,
-                    feedback: data.feedback
+                    band: bandScore,
+                    scores: data.scores || null,
+                    feedback: data.feedback || null,
+                    summary: data.summary || null,
+                    capReasons: Array.isArray(data.capReasons) ? data.capReasons : [],
+                    penalties: data.penalties || {},
+                    flags: data.flags || null,
+                    transcript: data.transcript || '',
+                    wordCount: data.wordCount ?? 0,
+                    durationSec: data.durationSec ?? 0,
                 });
 
                 // Save to localStorage for dashboard / performance integration
@@ -480,8 +624,13 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                     conversationHistory,
                     feedback: data.feedback,
                     bandScore,
+                    band: bandScore,
+                    scores: data.scores,
+                    summary: data.summary,
+                    wordCount: data.wordCount,
+                    durationSec: data.durationSec,
                     submittedAt: new Date().toISOString(),
-                    type: 'realtime_practice'
+                    type: 'realtime_practice',
                 };
 
                 const userId = user?.email || user?.id || null;
@@ -489,13 +638,32 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                 const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
                 saveHistory(updatedHistory, userId);
 
-                // Notify dashboards
                 window.dispatchEvent(new Event('progressUpdated'));
             } else {
                 console.error('Failed to end voice session:', data.error);
+                setVoiceSessionSummary({
+                    bandScore: 0,
+                    summary: {
+                        reasonForScore:
+                            data.error || 'Could not score this session. Please try again.',
+                        strengths: [],
+                        weaknesses: [],
+                        suggestions: [],
+                    },
+                });
             }
         } catch (error) {
             console.error('Error ending voice session:', error);
+            setVoiceSessionSummary({
+                bandScore: 0,
+                summary: {
+                    reasonForScore:
+                        'Network error while scoring this session. Please check your connection and try again.',
+                    strengths: [],
+                    weaknesses: [],
+                    suggestions: [],
+                },
+            });
         } finally {
             setIsVoiceEvaluating(false);
         }
@@ -1085,24 +1253,10 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                         )}
 
                         {voiceSessionSummary && !isVoiceEvaluating && (
-                            <Panel className="bg-gradient-to-br from-green-50 to-blue-50 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-sm text-slate-600">Real-time speaking band</p>
-                                        <p className="text-3xl font-extrabold text-green-700">
-                                            {voiceSessionSummary.bandScore ? voiceSessionSummary.bandScore.toFixed(1) : "--"}
-                                        </p>
-                                    </div>
-                                    <div className="text-xs text-slate-500">
-                                        Saved to dashboard & performance history.
-                                    </div>
-                                </div>
-                                <div className="border-t border-slate-200 pt-4">
-                                    <p className="text-sm text-slate-700 whitespace-pre-line">
-                                        {voiceSessionSummary.feedback}
-                                    </p>
-                                </div>
-                            </Panel>
+                            <VoiceSessionSummary
+                                summary={voiceSessionSummary}
+                                onClose={() => setVoiceSessionSummary(null)}
+                            />
                         )}
                     </div>
             </div>
