@@ -19,6 +19,7 @@ export function VoiceConversation({ onEndSession }) {
 		const [ieltsPart, setIeltsPart] = useState('Part 1');
 		const [isMuted, setIsMuted] = useState(false); // mic mute toggle (realtime mode)
 		const [statusBanner, setStatusBanner] = useState(''); // ephemeral status line
+		const [isEnding, setIsEnding] = useState(false); // double-click guard for End
 		const examinerTurnsRef = useRef(0);
 		const streamingAgentTextRef = useRef('');
     
@@ -42,6 +43,18 @@ export function VoiceConversation({ onEndSession }) {
     // slipped through).
     const userSpeakingDurationRef = useRef(0);
     const userSpeechStartedAtRef = useRef(null);
+    // ── Backup recording for guaranteed transcription ────────────────
+    // OpenAI's Realtime API sometimes fails to deliver Whisper transcripts
+    // through the data channel (events go missing, network blips, model
+    // session race conditions). To make sure scoring never reports
+    // "0 spoken words" when the user actually spoke, we record the SAME
+    // microphone stream in parallel via MediaRecorder, then on End we
+    // transcribe the full local audio through /api/speaking/exam/transcribe
+    // (existing Whisper endpoint) and use it as a fallback transcript.
+    const backupRecorderRef = useRef(null);
+    const backupChunksRef = useRef([]);
+    const backupStartedAtRef = useRef(null);
+    const backupBlobReadyRef = useRef(null); // resolves to final Blob
     // Enable Realtime API by default for better experience, can be disabled via env var
     const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME !== 'false');
 
@@ -106,6 +119,13 @@ export function VoiceConversation({ onEndSession }) {
                     realtimeRef.current.stop().catch(() => {});
                 }
             } catch {}
+            try {
+                if (backupRecorderRef.current && backupRecorderRef.current.state === 'recording') {
+                    backupRecorderRef.current.stop();
+                }
+            } catch {}
+            backupRecorderRef.current = null;
+            backupChunksRef.current = [];
             if (voiceDetectionRef.current) {
                 cancelAnimationFrame(voiceDetectionRef.current);
                 voiceDetectionRef.current = null;
@@ -121,6 +141,88 @@ export function VoiceConversation({ onEndSession }) {
             try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch {}
         };
     }, []);
+
+    // ── Backup recording helpers ────────────────────────────────────
+    const startBackupRecording = (stream) => {
+        try {
+            if (!stream || backupRecorderRef.current) return;
+            // Pick a supported mime type, prefer opus webm (small + Whisper happy)
+            const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                ? 'audio/webm;codecs=opus'
+                : MediaRecorder.isTypeSupported('audio/webm')
+                  ? 'audio/webm'
+                  : '';
+            const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+            backupChunksRef.current = [];
+            backupStartedAtRef.current = Date.now();
+            // Pre-allocate the promise so endVoiceSession can await it.
+            backupBlobReadyRef.current = new Promise((resolve) => {
+                recorder.onstop = () => {
+                    const blob = new Blob(backupChunksRef.current, {
+                        type: mime || 'audio/webm',
+                    });
+                    backupChunksRef.current = [];
+                    resolve(blob);
+                };
+            });
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) backupChunksRef.current.push(e.data);
+            };
+            recorder.start(1000); // flush a chunk every 1s
+            backupRecorderRef.current = recorder;
+            console.log('🎙️ Backup recorder started (mime:', mime, ')');
+        } catch (e) {
+            console.warn('⚠️ Backup recorder failed to start:', e);
+        }
+    };
+
+    // Stop the backup recorder, send the audio to Whisper, return its
+    // transcript (or null if anything failed). Always cleans up state.
+    const stopBackupAndTranscribe = async () => {
+        const recorder = backupRecorderRef.current;
+        const blobPromise = backupBlobReadyRef.current;
+        if (!recorder) return { transcript: null, durationSec: 0 };
+        const startedAt = backupStartedAtRef.current || Date.now();
+        const durationSec = Math.max(0, (Date.now() - startedAt) / 1000);
+        try {
+            if (recorder.state === 'recording') recorder.stop();
+        } catch (e) {
+            console.warn('⚠️ Backup stop error:', e);
+        }
+        let blob = null;
+        try {
+            blob = await Promise.race([
+                blobPromise,
+                new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+            ]);
+        } catch {}
+        backupRecorderRef.current = null;
+        backupBlobReadyRef.current = null;
+        backupStartedAtRef.current = null;
+
+        if (!blob || blob.size < 1000) {
+            console.log('🎙️ Backup blob too small or missing, skipping Whisper.');
+            return { transcript: null, durationSec };
+        }
+        try {
+            const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
+                || 'https://ielts-coach-backend.onrender.com';
+            const formData = new FormData();
+            formData.append('audio', blob, 'realtime-session.webm');
+            console.log('🎙️ Sending backup audio to Whisper for guaranteed transcript…', { size: blob.size });
+            const res = await fetch(`${API_BASE}/api/speaking/exam/transcribe`, {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            const transcript = (data?.transcript || '').trim();
+            console.log('✅ Backup transcript:', transcript.slice(0, 80) + (transcript.length > 80 ? '…' : ''));
+            return { transcript, durationSec };
+        } catch (err) {
+            console.warn('⚠️ Backup Whisper transcribe failed:', err);
+            return { transcript: null, durationSec };
+        }
+    };
 
     // Mute / unmute the local microphone (Realtime mode)
     const toggleMute = () => {
@@ -471,12 +573,14 @@ export function VoiceConversation({ onEndSession }) {
                             setIsStreamingMode(true);
                             setIsRecording(false);
                             setIsListening(true);
-                            // Tap into the realtime mic stream to drive the volume meter
                             try {
                                 const stream = realtimeRef.current?.getMicStream?.();
-                                if (stream) setupVoiceActivityDetection(stream);
+                                if (stream) {
+                                    setupVoiceActivityDetection(stream);
+                                    startBackupRecording(stream);
+                                }
                             } catch (meterErr) {
-                                console.warn('⚠️ Voice meter setup failed:', meterErr);
+                                console.warn('⚠️ Voice meter / backup setup failed:', meterErr);
                             }
                             console.log('✅ Realtime API connected. Listening enabled; AI will speak via realtime audio.');
                         },
@@ -1249,7 +1353,32 @@ export function VoiceConversation({ onEndSession }) {
         reader.readAsDataURL(audioBlob);
     };
 
-    const endVoiceSession = () => {
+    const endVoiceSession = async () => {
+        if (isEnding) return; // guard against double-click
+        setIsEnding(true);
+        // Roll up a partial speech segment that hadn't been "stopped" yet.
+        if (userSpeechStartedAtRef.current) {
+            const segSec = Math.max(
+                0,
+                (Date.now() - userSpeechStartedAtRef.current) / 1000
+            );
+            userSpeakingDurationRef.current =
+                (userSpeakingDurationRef.current || 0) + segSec;
+            userSpeechStartedAtRef.current = null;
+        }
+
+        // ── BACKUP TRANSCRIPTION ── ALWAYS try to transcribe the local
+        // mic recording before tearing down the call. This is what saves
+        // us when the realtime data channel never delivered the candidate's
+        // transcripts — we still get a real transcript from Whisper here.
+        setStatusBanner('💾 Saving your recording…');
+        let backupResult = { transcript: null, durationSec: 0 };
+        try {
+            backupResult = await stopBackupAndTranscribe();
+        } catch (e) {
+            console.warn('⚠️ Backup transcribe wrapper failed:', e);
+        }
+
         // Cut the AI off mid-sentence so the call closes immediately and
         // does NOT play a goodbye line / score reveal through the speakers.
         if (useRealtime && realtimeRef.current) {
@@ -1267,17 +1396,6 @@ export function VoiceConversation({ onEndSession }) {
                 realtimeAudioRef.current.srcObject = null;
             } catch {}
             realtimeAudioRef.current = null;
-        }
-
-        // Roll up a partial speech segment that hadn't been "stopped" yet.
-        if (userSpeechStartedAtRef.current) {
-            const segSec = Math.max(
-                0,
-                (Date.now() - userSpeechStartedAtRef.current) / 1000
-            );
-            userSpeakingDurationRef.current =
-                (userSpeakingDurationRef.current || 0) + segSec;
-            userSpeechStartedAtRef.current = null;
         }
         // Stop voice activity detection
         if (voiceDetectionRef.current) {
@@ -1322,22 +1440,54 @@ export function VoiceConversation({ onEndSession }) {
         setVoiceActivity(false);
         setIsMuted(false);
         setVolumeLevel(0);
-        setStatusBanner('');
         setSessionId(null);
         setRealtimeTranscript('');
+        setIsEnding(false);
         // Don't wipe userTranscript / currentMessage / conversationHistory so
         // the user can still see the last reply after the session ends.
 
         // Notify parent so it can trigger AI evaluation and save band score.
         // userSpeakingDurationSec is what /realtime/end uses to enforce IELTS
         // length caps (< 20s → max band 3, < 30 words → max band 3.5, etc).
-        const totalUserSpeakingSec = Number(userSpeakingDurationRef.current || 0);
+        const vadDurationSec = Number(userSpeakingDurationRef.current || 0);
         userSpeakingDurationRef.current = 0;
+
+        // Build the final conversation history. If realtime API gave us
+        // user messages, keep them. If they're missing/empty but the
+        // backup transcript has content, splice the backup transcript
+        // in as a synthetic user turn so the scorer has something to
+        // evaluate (instead of falsely reporting "no speech").
+        let finalHistory = conversationHistory;
+        const hasRealtimeUserMessages = conversationHistory.some(
+            (m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0
+        );
+        const backupText = (backupResult.transcript || '').trim();
+        if (!hasRealtimeUserMessages && backupText) {
+            finalHistory = [
+                ...conversationHistory,
+                {
+                    role: 'user',
+                    content: backupText,
+                    timestamp: new Date(),
+                    source: 'backup-transcription',
+                },
+            ];
+            console.log('🛟 Using backup transcript for scoring (realtime had none).');
+        }
+
+        // Use whichever duration estimate is larger and more credible.
+        // The MediaRecorder elapsed time is wall-clock and is a hard upper
+        // bound; the VAD-derived sum is closer to actual speech time.
+        // For length-cap purposes we want speech time, but if VAD never
+        // fired we fall back to the recording length as a proxy.
+        const totalUserSpeakingSec = Math.max(vadDurationSec, hasRealtimeUserMessages ? 0 : backupResult.durationSec);
+
+        setStatusBanner('');
         if (typeof onEndSession === 'function') {
             try {
                 onEndSession({
                     sessionId,
-                    conversationHistory,
+                    conversationHistory: finalHistory,
                     userSpeakingDurationSec: totalUserSpeakingSec,
                 });
             } catch (err) {
@@ -1622,10 +1772,11 @@ export function VoiceConversation({ onEndSession }) {
                             )}
                             <button
                                 onClick={endVoiceSession}
-                                className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 flex items-center space-x-2"
+                                disabled={isEnding}
+                                className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center space-x-2"
                             >
-                                <span className="text-xl">🏁</span>
-                                <span>End Session</span>
+                                <span className="text-xl">{isEnding ? '⏳' : '🏁'}</span>
+                                <span>{isEnding ? 'Saving & scoring…' : 'End Session'}</span>
                             </button>
                         </div>
                     </div>
