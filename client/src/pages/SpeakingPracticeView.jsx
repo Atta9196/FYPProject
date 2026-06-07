@@ -10,6 +10,7 @@ import {
 } from "../services/api/generationCacheApi";
 import MicButton from "../features/speaking/components/MicButton";
 import { VoiceConversation } from "../features/speaking/components/VoiceConversation";
+import { IeltsExamSimulator } from "../features/speaking/exam/IeltsExamSimulator";
 
 function getStorageKey(userId) {
     return getStorageKeyForModule('speaking', userId) || "ielts-speaking-history";
@@ -38,7 +39,7 @@ function saveHistory(entries, userId) {
 export function SpeakingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
     // Mode selection state
-    const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
+    const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', 'voice', or 'exam'
     
     // Record & Submit mode state
     const [isRecording, setIsRecording] = useState(false);
@@ -563,7 +564,42 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                         </div>
 
                         {/* Mode Selection Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                            {/* IELTS Exam Simulation Mode */}
+                            <div
+                                className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-amber-200 hover:border-amber-400 relative"
+                                onClick={() => setSelectedMode('exam')}
+                            >
+                                <span className="absolute top-3 right-3 inline-flex items-center rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 uppercase tracking-wide">
+                                    New
+                                </span>
+                                <div className="text-center">
+                                    <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                        <span className="text-4xl">🎓</span>
+                                    </div>
+                                    <h3 className="text-xl sm:text-2xl font-bold text-slate-800 mb-3">
+                                        IELTS Exam Simulation
+                                    </h3>
+                                    <p className="text-slate-600 mb-6 leading-relaxed text-sm">
+                                        Full 3-part IELTS Speaking exam — Part 1 interview, Part 2 cue card with prep & speaking timers, Part 3 discussion, then a strict band score with detailed feedback.
+                                    </p>
+                                    <div className="space-y-2 text-sm text-slate-500">
+                                        <div className="flex items-center justify-center">
+                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                                            Part 1 / 2 / 3 structure
+                                        </div>
+                                        <div className="flex items-center justify-center">
+                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                                            1 min prep + 2 min cue card
+                                        </div>
+                                        <div className="flex items-center justify-center">
+                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                                            Official IELTS band scoring
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Record & Submit Mode */}
                             <div 
                                 className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-200"
@@ -664,6 +700,14 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                 </div>
         );
         return embedded ? modeSelectionContent : <AppLayout>{modeSelectionContent}</AppLayout>;
+    }
+
+    // IELTS Exam Simulation Mode
+    if (selectedMode === 'exam') {
+        const examContent = (
+            <IeltsExamSimulator onExit={resetToModeSelection} />
+        );
+        return embedded ? examContent : <AppLayout>{examContent}</AppLayout>;
     }
 
     // Record & Submit Mode

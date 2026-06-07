@@ -1235,6 +1235,612 @@ Provide concise feedback.`;
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IELTS Speaking Exam Simulation
+//
+// Three new endpoints power a realistic IELTS Speaking test:
+//
+//   POST /api/speaking/exam/setup
+//      → Generates a complete exam structure (Part 1: 8-12 introduction
+//        questions, Part 2: cue card with bullets, Part 3: 5-8 discussion
+//        questions linked to the cue card topic). One AI call produces the
+//        whole exam so latency between parts stays low and costs predictable.
+//
+//   POST /api/speaking/exam/transcribe   (multipart audio)
+//      → Whisper-only transcription for a single answer. No scoring. Returns
+//        { transcript, wordCount }. Called once per question/part.
+//
+//   POST /api/speaking/exam/score
+//      → Final exam evaluation using the shared scoringService:
+//        per-criterion bands (Fluency/Lexical/Grammar/Pronunciation),
+//        duration/word/relevance/repetition caps applied, overall IELTS
+//        band with proper .25/.75 rounding, strengths/weaknesses/suggestions
+//        block plus targeted grammar / vocabulary / pronunciation advice.
+//
+// Existing routes (/question, /evaluate, /realtime/*, /history) are
+// untouched so the Record + Text + Voice modes keep working unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post("/exam/setup", async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "OPENAI_API_KEY not configured",
+      });
+    }
+
+    const sessionId = `exam_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const systemPrompt = `You are a professional IELTS Speaking examiner generating a COMPLETE Speaking test that mirrors the real Cambridge IELTS Speaking exam exactly. Return ONLY valid JSON — no commentary, no markdown.
+
+REAL IELTS STRUCTURE
+- Part 1 (Introduction & Interview, 4-5 min): 8-12 short personal questions on 2-3 familiar topics (hometown, work/study, hobbies, family, daily life, food, travel, etc.). Start with 2 fixed-style questions: introducing themselves + where they live. Then cover 2-3 topic blocks of 3-4 questions each.
+- Part 2 (Cue Card, 3-4 min): a single cue card on a person / place / event / object / experience. Cue card title MUST be in the form "Describe ...". Include EXACTLY 3-4 "You should say" bullet points and one final prompt sentence ("and explain why ...").
+- Part 3 (Discussion, 4-5 min): 5-7 abstract discussion questions DIRECTLY linked to the cue card topic (broader, more analytical — comparisons, future trends, societal impact, opinions). They must clearly relate to the cue card topic.
+
+OUTPUT JSON SCHEMA (use these exact keys):
+{
+  "topic": "<one short phrase describing the overall thematic area>",
+  "part1": {
+    "questions": [
+      "What is your full name?",
+      "Where are you from?",
+      "<8-10 more Part 1 questions>"
+    ]
+  },
+  "part2": {
+    "cueCard": {
+      "title": "Describe ...",
+      "points": ["<point 1>", "<point 2>", "<point 3>", "<optional point 4>"],
+      "finalPrompt": "and explain why ..."
+    }
+  },
+  "part3": {
+    "questions": [
+      "<question 1>",
+      "<5-6 more abstract discussion questions related to the cue card topic>"
+    ]
+  }
+}
+
+Rules:
+- Part 1 must contain BETWEEN 8 AND 12 questions, all short, conversational, present-tense focused.
+- Part 2 cue card MUST be a "Describe …" prompt with 3-4 bullets and a final "and explain …" sentence.
+- Part 3 must contain BETWEEN 5 AND 7 questions, all clearly tied to the cue card topic.
+- Questions must be natural spoken English. No question may begin with "Why don't you tell me…" or other filler.
+- Do NOT include answers, hints, or any examiner commentary.`;
+
+    const userPrompt = `Generate one complete IELTS Speaking test. Pick a fresh, varied topic (avoid the most overused topics like "your hometown" as the cue card — that can appear in Part 1 instead). Return JSON only.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      temperature: 0.8,
+      max_tokens: 1200,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Empty AI response for exam setup");
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      throw new Error("Failed to parse exam setup JSON");
+    }
+
+    const exam = normaliseExamPayload(parsed);
+
+    return res.json({
+      success: true,
+      sessionId,
+      ...exam,
+    });
+  } catch (error) {
+    console.error("❌ Exam setup failed:", error);
+    // Always return a usable fallback so the user is never stuck on a blank
+    // exam screen if OpenAI is having a bad minute.
+    return res.json({
+      success: true,
+      sessionId: `exam_${Date.now()}_fallback`,
+      ...buildExamFallback(),
+      fallback: true,
+    });
+  }
+});
+
+router.post("/exam/transcribe", upload.single("audio"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, error: "No audio file provided" });
+  }
+  const audioFilePath = req.file.path;
+  try {
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(audioFilePath),
+      model: "whisper-1",
+      language: "en",
+    });
+
+    const transcript = (transcription.text || "").trim();
+    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
+
+    fs.unlink(audioFilePath, (err) => {
+      if (err) console.error("⚠️ Error deleting exam audio file:", err);
+    });
+
+    return res.json({
+      success: true,
+      transcript,
+      wordCount,
+    });
+  } catch (err) {
+    console.error("❌ Exam transcription failed:", err);
+    if (fs.existsSync(audioFilePath)) {
+      fs.unlink(audioFilePath, () => {});
+    }
+    return res.status(500).json({
+      success: false,
+      error: "Failed to transcribe audio.",
+      details: err.message,
+    });
+  }
+});
+
+router.post("/exam/score", async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: "OPENAI_API_KEY not configured",
+      });
+    }
+
+    const {
+      sessionId,
+      userId,
+      topic,
+      part1,
+      part2,
+      part3,
+    } = req.body || {};
+
+    // Build the combined transcript and combined metrics
+    const combinedAnswers = [];
+    const part1Answers = Array.isArray(part1?.answers) ? part1.answers : [];
+    const part2Answer = part2?.answer || null;
+    const part3Answers = Array.isArray(part3?.answers) ? part3.answers : [];
+
+    part1Answers.forEach((a, i) => {
+      combinedAnswers.push({
+        part: 1,
+        index: i,
+        question: a?.question || "",
+        transcript: String(a?.transcript || "").trim(),
+        durationSec: Number(a?.durationSec) || 0,
+      });
+    });
+
+    if (part2Answer) {
+      combinedAnswers.push({
+        part: 2,
+        index: 0,
+        question: part2?.cueCard?.title || "Cue card",
+        transcript: String(part2Answer.transcript || "").trim(),
+        durationSec: Number(part2Answer.durationSec) || 0,
+      });
+    }
+
+    part3Answers.forEach((a, i) => {
+      combinedAnswers.push({
+        part: 3,
+        index: i,
+        question: a?.question || "",
+        transcript: String(a?.transcript || "").trim(),
+        durationSec: Number(a?.durationSec) || 0,
+      });
+    });
+
+    const totalTranscript = combinedAnswers
+      .map((a) => a.transcript)
+      .filter(Boolean)
+      .join(" ");
+    const totalWordCount = countWords(totalTranscript);
+    const totalDurationSec = combinedAnswers.reduce((sum, a) => sum + (a.durationSec || 0), 0);
+
+    // Deterministic validation across the ENTIRE exam (not just one segment)
+    const validation = validateSpeakingSubmission({
+      transcript: totalTranscript,
+      audioDurationSec: totalDurationSec,
+    });
+
+    // Blank / no-speech across the whole exam → band 0, no AI call
+    if (!validation.valid) {
+      const cap = Number(validation.wordCap.cap ?? 0);
+      const payload = {
+        success: true,
+        sessionId,
+        module: "speaking-exam",
+        transcript: totalTranscript,
+        wordCount: totalWordCount,
+        durationSec: totalDurationSec,
+        scores: { fluency: cap, lexical: cap, grammar: cap, pronunciation: cap },
+        bandScore: cap,
+        band: cap,
+        overallBand: cap,
+        penalties: { invalidSubmission: true },
+        capReasons: [validation.wordCap.reason || "Exam could not be assessed."],
+        flags: { relevant: false, meaningful: false, sufficient: false },
+        feedback: {
+          fluency: `${cap} / 9 - No usable speech.`,
+          lexical: `${cap} / 9 - No usable speech.`,
+          grammar: `${cap} / 9 - No usable speech.`,
+          pronunciation: `${cap} / 9 - No usable speech.`,
+          bandScore: cap,
+        },
+        partTranscripts: combinedAnswers,
+        summary: {
+          reasonForScore: validation.wordCap.reason || "Exam could not be assessed.",
+          strengths: [],
+          weaknesses: ["No assessable speech recorded for the exam."],
+          suggestions: [
+            "Make sure the microphone is permitted and working before starting.",
+            "Speak for at least 30–60 seconds per question.",
+            "Address every part of each question with concrete examples.",
+          ],
+          commonGrammarMistakes: [],
+          vocabularyImprovements: [],
+          pronunciationAdvice: [],
+        },
+      };
+      return res.json(persistAndReturnExamResult(payload, sessionId, userId, combinedAnswers, topic));
+    }
+
+    // AI examination across the entire exam transcript
+    const systemPrompt = `You are a senior IELTS Speaking examiner. The candidate has just completed a FULL 3-part IELTS Speaking test. Score them strictly using the official IELTS Speaking band descriptors based ONLY on the combined transcript.
+
+Return ONLY JSON with this exact schema (no markdown, no commentary):
+{
+  "scores": {
+    "fluency":       <0-9 in 0.5 steps>,
+    "lexical":       <0-9 in 0.5 steps>,
+    "grammar":       <0-9 in 0.5 steps>,
+    "pronunciation": <0-9 in 0.5 steps>
+  },
+  "feedback": {
+    "fluency":       "<1-2 sentences>",
+    "lexical":       "<1-2 sentences>",
+    "grammar":       "<1-2 sentences>",
+    "pronunciation": "<1-2 sentences>"
+  },
+  "strengths":   ["<2-3 specific strengths>"],
+  "weaknesses":  ["<2-3 specific weaknesses>"],
+  "suggestions": ["<3-5 concrete suggestions>"],
+  "commonGrammarMistakes":   ["<2-4 specific grammar errors the candidate made>"],
+  "vocabularyImprovements":  ["<2-4 vocabulary upgrade suggestions tied to the topic>"],
+  "pronunciationAdvice":     ["<2-3 generic pronunciation tips based on likely L2 features>"],
+  "flags": {
+    "relevant":         <true if answers actually addressed the questions>,
+    "relevance_reason": "<short reason or empty>",
+    "meaningful":       <true if the response is meaningful>,
+    "sufficient":       <true if there is enough content for IELTS assessment>
+  }
+}
+
+Strict rules:
+- If responses are OFF-TOPIC, set relevant=false and DO NOT give Fluency or Lexical above 5.
+- If the candidate gives only one-word or very short answers throughout, lower Fluency, Lexical and Grammar accordingly.
+- Reference SPECIFIC things the candidate actually said in strengths/weaknesses/suggestions; do not write generic templates.
+- Pronunciation must be estimated conservatively (you cannot hear audio); base it on punctuation/transcription clarity and avoid giving above 7 from text alone unless transcript is perfectly fluent.`;
+
+    const transcriptForAI = combinedAnswers
+      .map((a) => `[Part ${a.part}] Q: ${a.question}\nA (${a.durationSec | 0}s): ${a.transcript || "(no answer)"}`)
+      .join("\n\n");
+
+    const userPrompt = `Topic theme: ${topic || "general"}.
+
+FULL EXAM TRANSCRIPT
+====================
+${transcriptForAI}
+
+Total spoken words: ${totalWordCount}.
+Total speaking duration: ${Math.round(totalDurationSec)}s.
+
+Return the JSON exactly per the schema. Be strict.`;
+
+    let aiResult;
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+        max_tokens: 1000,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const content = completion.choices?.[0]?.message?.content;
+      if (!content) throw new Error("Empty AI response for exam scoring");
+      aiResult = JSON.parse(content);
+    } catch (err) {
+      console.error("❌ Exam AI scoring failed:", err);
+      return res.status(503).json({
+        success: false,
+        error: "AI evaluation is temporarily unavailable. Please try again.",
+      });
+    }
+
+    const scores = {
+      fluency:       clampBand(aiResult?.scores?.fluency),
+      lexical:       clampBand(aiResult?.scores?.lexical),
+      grammar:       clampBand(aiResult?.scores?.grammar),
+      pronunciation: clampBand(aiResult?.scores?.pronunciation),
+    };
+
+    const flags = {
+      relevant:        aiResult?.flags?.relevant !== false,
+      relevanceReason: typeof aiResult?.flags?.relevance_reason === "string"
+        ? aiResult.flags.relevance_reason.trim()
+        : "",
+      meaningful:      aiResult?.flags?.meaningful !== false,
+      sufficient:      aiResult?.flags?.sufficient !== false,
+    };
+
+    const rawAverage = averageBand([
+      scores.fluency,
+      scores.lexical,
+      scores.grammar,
+      scores.pronunciation,
+    ]);
+    let adjustedBand = clampBand(rawAverage) ?? 0;
+    const penalties = {};
+    const capReasons = [];
+
+    const wordCap = validation.wordCap.cap;
+    if (wordCap !== null && wordCap !== undefined && adjustedBand > wordCap) {
+      adjustedBand = wordCap;
+      penalties.lengthCap = true;
+      capReasons.push(validation.wordCap.reason);
+    }
+    if (!flags.relevant && adjustedBand > 4) {
+      adjustedBand = 4;
+      penalties.unrelatedCap = true;
+      capReasons.push(
+        flags.relevanceReason
+          ? `Answers were off-topic: ${flags.relevanceReason} (capped at band 4).`
+          : "Answers were off-topic — overall capped at band 4."
+      );
+    }
+    if (!flags.meaningful && adjustedBand > 3.5) {
+      adjustedBand = 3.5;
+      penalties.notMeaningful = true;
+      capReasons.push("Responses lacked meaningful communication — capped at band 3.5.");
+    }
+
+    const overallBand = clampBand(adjustedBand);
+
+    const fluencyText = stringOrSpeaking(aiResult?.feedback?.fluency, "No fluency feedback");
+    const lexicalText = stringOrSpeaking(aiResult?.feedback?.lexical, "No lexical feedback");
+    const grammarText = stringOrSpeaking(aiResult?.feedback?.grammar, "No grammar feedback");
+    const pronunciationText = stringOrSpeaking(
+      aiResult?.feedback?.pronunciation,
+      "Pronunciation cannot be fully assessed from text alone."
+    );
+
+    const feedback = {
+      fluency: `${scores.fluency ?? "-"} / 9 - ${fluencyText}`,
+      lexical: `${scores.lexical ?? "-"} / 9 - ${lexicalText}`,
+      grammar: `${scores.grammar ?? "-"} / 9 - ${grammarText}`,
+      pronunciation: `${scores.pronunciation ?? "-"} / 9 - ${pronunciationText}`,
+      bandScore: overallBand,
+    };
+
+    const fallback = summariseStrengthsWeaknesses(scores, SPEAKING_CRITERIA_LABELS);
+    const strengths = Array.isArray(aiResult?.strengths) && aiResult.strengths.length
+      ? aiResult.strengths.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : fallback.strengths;
+    const weaknesses = Array.isArray(aiResult?.weaknesses) && aiResult.weaknesses.length
+      ? aiResult.weaknesses.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : fallback.weaknesses;
+    const suggestions = Array.isArray(aiResult?.suggestions) && aiResult.suggestions.length
+      ? aiResult.suggestions.filter((s) => typeof s === "string" && s.trim()).slice(0, 6)
+      : [
+          "Develop each answer with 2-3 supporting sentences and concrete examples.",
+          "Add more linking expressions: however, on the other hand, in addition.",
+          "Use a wider range of grammar (conditionals, relative clauses, passive voice).",
+        ];
+    const commonGrammarMistakes = Array.isArray(aiResult?.commonGrammarMistakes)
+      ? aiResult.commonGrammarMistakes.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+      : [];
+    const vocabularyImprovements = Array.isArray(aiResult?.vocabularyImprovements)
+      ? aiResult.vocabularyImprovements.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+      : [];
+    const pronunciationAdvice = Array.isArray(aiResult?.pronunciationAdvice)
+      ? aiResult.pronunciationAdvice.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : [];
+
+    const reasonForScore = buildExamReason({
+      overallBand,
+      rawOverallBand: clampBand(rawAverage),
+      scores,
+      capReasons,
+      wordCount: totalWordCount,
+      durationSec: totalDurationSec,
+    });
+
+    const payload = {
+      success: true,
+      sessionId,
+      module: "speaking-exam",
+      transcript: totalTranscript,
+      wordCount: totalWordCount,
+      durationSec: totalDurationSec,
+      scores,
+      bandScore: overallBand,
+      band: overallBand,
+      overallBand,
+      rawOverallBand: clampBand(rawAverage),
+      penalties,
+      capReasons,
+      flags,
+      feedback,
+      partTranscripts: combinedAnswers,
+      summary: {
+        reasonForScore,
+        strengths,
+        weaknesses,
+        suggestions,
+        commonGrammarMistakes,
+        vocabularyImprovements,
+        pronunciationAdvice,
+      },
+    };
+
+    return res.json(persistAndReturnExamResult(payload, sessionId, userId, combinedAnswers, topic));
+  } catch (error) {
+    console.error("❌ Exam score failed:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to score exam.",
+      message: error.message,
+    });
+  }
+});
+
+function persistAndReturnExamResult(payload, sessionId, userId, combinedAnswers, topic) {
+  if (db) {
+    db.collection("speaking_practice")
+      .add({
+        userId: userId || "anonymous",
+        sessionId,
+        type: "ielts_exam",
+        topic: topic || null,
+        bandScore: payload.bandScore ?? null,
+        scores: payload.scores || null,
+        feedback: payload.feedback || null,
+        summary: payload.summary || null,
+        partTranscripts: combinedAnswers,
+        wordCount: payload.wordCount ?? null,
+        durationSec: payload.durationSec ?? null,
+        penalties: payload.penalties || {},
+        capReasons: payload.capReasons || [],
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      })
+      .catch((err) => console.error("⚠️ Error saving exam to Firestore:", err));
+  }
+  return payload;
+}
+
+function normaliseExamPayload(parsed) {
+  const part1Questions = Array.isArray(parsed?.part1?.questions)
+    ? parsed.part1.questions.filter((q) => typeof q === "string" && q.trim()).map((q) => q.trim())
+    : [];
+  let part3Questions = Array.isArray(parsed?.part3?.questions)
+    ? parsed.part3.questions.filter((q) => typeof q === "string" && q.trim()).map((q) => q.trim())
+    : [];
+
+  // Enforce official counts (clip / pad)
+  let safePart1 = part1Questions.slice(0, 12);
+  if (safePart1.length < 8) {
+    const filler = [
+      "Do you enjoy spending time with your family?",
+      "Tell me about a hobby you enjoy.",
+      "Do you prefer mornings or evenings? Why?",
+      "What kind of food do you like?",
+    ];
+    while (safePart1.length < 8 && filler.length) safePart1.push(filler.shift());
+  }
+  let safePart3 = part3Questions.slice(0, 7);
+  if (safePart3.length < 5) {
+    const filler = [
+      "How is this topic changing in modern society?",
+      "Do you think young people view this differently from older generations?",
+      "What role does education play in this area?",
+      "How might this be different in the future?",
+    ];
+    while (safePart3.length < 5 && filler.length) safePart3.push(filler.shift());
+  }
+
+  const cue = parsed?.part2?.cueCard || {};
+  const cueCard = {
+    title: typeof cue.title === "string" && cue.title.trim() ? cue.title.trim() : "Describe a person who has inspired you",
+    points: Array.isArray(cue.points)
+      ? cue.points.filter((p) => typeof p === "string" && p.trim()).map((p) => p.trim()).slice(0, 4)
+      : ["who the person is", "how you know them", "what they have done"],
+    finalPrompt: typeof cue.finalPrompt === "string" && cue.finalPrompt.trim()
+      ? cue.finalPrompt.trim()
+      : "and explain why they have inspired you.",
+  };
+  if (cueCard.points.length < 3) {
+    cueCard.points = ["who the person is", "how you know them", "what they have done"];
+  }
+
+  return {
+    topic: typeof parsed?.topic === "string" && parsed.topic.trim() ? parsed.topic.trim() : "general IELTS topic",
+    part1: { questions: safePart1 },
+    part2: { cueCard },
+    part3: { questions: safePart3 },
+  };
+}
+
+function buildExamFallback() {
+  return {
+    topic: "people who inspire us",
+    part1: {
+      questions: [
+        "Could you tell me your full name, please?",
+        "Where are you from?",
+        "Do you work or are you a student?",
+        "What do you enjoy most about your work or studies?",
+        "Let's talk about hobbies. What do you like to do in your free time?",
+        "Do you prefer indoor or outdoor activities? Why?",
+        "Now let's talk about food. What kind of food do you usually eat at home?",
+        "Do you like cooking? Why or why not?",
+      ],
+    },
+    part2: {
+      cueCard: {
+        title: "Describe a person who has inspired you",
+        points: [
+          "who the person is",
+          "how you know them",
+          "what they have done",
+        ],
+        finalPrompt: "and explain why this person has inspired you.",
+      },
+    },
+    part3: {
+      questions: [
+        "Why do you think some people become role models for others?",
+        "How have the qualities people admire changed over the years?",
+        "Do you think young people today have fewer role models than in the past?",
+        "What role do parents play in inspiring children?",
+        "How important is it for famous people to act as role models?",
+        "Do you think schools should teach children about inspirational figures? Why?",
+      ],
+    },
+  };
+}
+
+function buildExamReason({ overallBand, rawOverallBand, scores, capReasons, wordCount, durationSec }) {
+  const parts = [];
+  parts.push(
+    `Overall band ${overallBand} from Fluency ${scores.fluency ?? "-"}, ` +
+    `Lexical ${scores.lexical ?? "-"}, Grammar ${scores.grammar ?? "-"}, ` +
+    `Pronunciation ${scores.pronunciation ?? "-"} (raw average ${rawOverallBand ?? "-"}).`
+  );
+  parts.push(`Total spoken words across the exam: ${wordCount}.`);
+  parts.push(`Total speaking time: ${Math.round(durationSec || 0)}s.`);
+  if (capReasons && capReasons.length) parts.push(...capReasons);
+  if (!capReasons?.length) parts.push("No penalties applied.");
+  return parts.join(" ");
+}
+
 /**
  * GET /api/speaking/history/:userId
  * Get practice history for a user
