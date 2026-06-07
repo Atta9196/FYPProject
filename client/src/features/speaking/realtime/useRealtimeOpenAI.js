@@ -189,12 +189,17 @@ TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routin
 							instructions: ieltsInstructions,
 							modalities: ['audio', 'text'],
 							// Mirror the server VAD config — patient turn-taking.
+							// threshold 0.5 (default) so quiet speakers aren't ignored;
+							// prefix_padding 500ms so the first syllable isn't clipped;
+							// silence_duration 2000ms so the examiner doesn't cut in.
 							turn_detection: {
 								type: 'server_vad',
-								threshold: 0.55,
-								prefix_padding_ms: 300,
+								threshold: 0.5,
+								prefix_padding_ms: 500,
 								silence_duration_ms: 2000,
 							},
+							// MUST stay on or the candidate's words never get
+							// transcribed and the final scorer gets an empty payload.
 							input_audio_transcription: { model: 'whisper-1' },
 						},
 					};
@@ -231,8 +236,10 @@ TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routin
           const eventData = JSON.parse(event.data);
           const t = eventData.type || '';
 
-          // Only log a small subset to keep the console readable
-          if (!t.includes('audio') || t.endsWith('.done') || t.endsWith('.completed')) {
+          // Log every event type once with a short preview — invaluable when
+          // diagnosing "speech not detected" issues. Audio deltas are dropped
+          // from the log because they fire dozens of times per second.
+          if (t !== 'response.audio.delta' && t !== 'response.audio_transcript.delta') {
             console.log('📨 Realtime event:', t);
           }
 
@@ -316,6 +323,48 @@ TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routin
           }
           if (t === 'conversation.item.input_audio_transcription.failed') {
             console.warn('⚠️ Whisper failed to transcribe user audio:', eventData);
+            if (onTranscriptionUpdate) {
+              onTranscriptionUpdate({
+                transcript: '',
+                isPartial: false,
+                isComplete: true,
+                eventType: t,
+                failed: true,
+                error: eventData.error?.message || 'Transcription failed',
+              });
+            }
+            return;
+          }
+          // ── Fallback: some sessions deliver the user transcript only
+          //    through `conversation.item.created` (when the input item
+          //    is added to the conversation). Grab it from there too so
+          //    speech is never lost.
+          if (t === 'conversation.item.created' && onTranscriptionUpdate) {
+            const item = eventData.item || {};
+            if (item.role === 'user' && Array.isArray(item.content)) {
+              for (const part of item.content) {
+                if (
+                  part &&
+                  (part.type === 'input_audio' || part.type === 'audio') &&
+                  typeof part.transcript === 'string' &&
+                  part.transcript.trim()
+                ) {
+                  onTranscriptionUpdate({
+                    transcript: part.transcript.trim(),
+                    isPartial: false,
+                    isComplete: true,
+                    eventType: t,
+                    viaFallback: true,
+                  });
+                  return;
+                }
+              }
+            }
+          }
+          // Server VAD committed audio — log it so we can see Whisper at
+          // least received something even if transcription doesn't return.
+          if (t === 'input_audio_buffer.committed') {
+            console.log('🎤 Audio committed for transcription (item:', eventData.item_id, ')');
             return;
           }
 

@@ -552,7 +552,7 @@ export function VoiceConversation({ onEndSession }) {
                             // Handle real-time transcription updates from server VAD
                             if (data.speechStarted) {
                                 userSpeechStartedAtRef.current = Date.now();
-                                setStatusBanner('🎤 Listening…');
+                                setStatusBanner('🎤 Mic hearing you — keep going…');
                                 setRealtimeTranscript('');
                                 return;
                             }
@@ -574,18 +574,33 @@ export function VoiceConversation({ onEndSession }) {
                                 setRealtimeTranscript((prev) => (prev || '') + data.transcript);
                                 return;
                             }
+                            if (data.failed) {
+                                console.warn('⚠️ Transcription failed:', data.error);
+                                setStatusBanner('⚠️ Couldn\'t transcribe that — please speak again, closer to the mic.');
+                                setRealtimeTranscript('');
+                                return;
+                            }
                             if (data.isComplete && data.transcript) {
+                                // Avoid duplicate user messages if both the
+                                // .completed event AND the .item.created
+                                // fallback fire for the same utterance.
+                                setConversationHistory((prev) => {
+                                    const last = prev[prev.length - 1];
+                                    if (last && last.role === 'user' && last.content === data.transcript) {
+                                        return prev;
+                                    }
+                                    return [
+                                        ...prev,
+                                        {
+                                            role: 'user',
+                                            content: data.transcript,
+                                            timestamp: new Date(),
+                                        },
+                                    ];
+                                });
                                 setUserTranscript(data.transcript);
                                 setRealtimeTranscript('');
                                 setStatusBanner('');
-                                setConversationHistory((prev) => ([
-                                    ...prev,
-                                    {
-                                        role: 'user',
-                                        content: data.transcript,
-                                        timestamp: new Date(),
-                                    },
-                                ]));
                                 return;
                             }
                             if (data.isComplete && !data.transcript) {
@@ -806,15 +821,37 @@ export function VoiceConversation({ onEndSession }) {
 
     const setupVoiceActivityDetection = (stream) => {
         try {
-            audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+            // Close any previous context so we don't leak nodes on restart.
+            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                try { audioContextRef.current.close(); } catch {}
+            }
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            audioContextRef.current = new Ctx();
             analyserRef.current = audioContextRef.current.createAnalyser();
             const source = audioContextRef.current.createMediaStreamSource(stream);
-            
+
             analyserRef.current.fftSize = 256;
             analyserRef.current.smoothingTimeConstant = 0.8;
             source.connect(analyserRef.current);
-            
-            // Start voice activity detection
+
+            // Chrome sometimes creates the context in `suspended` if the
+            // creation isn't directly attributed to the click. Force resume.
+            if (audioContextRef.current.state === 'suspended') {
+                audioContextRef.current.resume().catch((e) => {
+                    console.warn('⚠️ AudioContext resume failed:', e);
+                });
+            }
+
+            // Sanity check: confirm the stream actually has live audio tracks.
+            const tracks = stream.getAudioTracks();
+            if (tracks.length === 0) {
+                console.error('❌ Stream has no audio tracks — mic level meter will stay at 0.');
+            } else {
+                tracks.forEach((t) =>
+                    console.log('🎤 Meter tap', { id: t.id, enabled: t.enabled, muted: t.muted, readyState: t.readyState })
+                );
+            }
+
             detectVoiceActivity();
         } catch (error) {
             console.error('❌ Error setting up voice detection:', error);
@@ -1471,22 +1508,35 @@ export function VoiceConversation({ onEndSession }) {
                 </div>
             </div>
 
-			{/* Realtime pronunciation/voice level bar */}
-			<div className="mt-4">
-				<div className="flex items-center justify-between mb-1">
-					<span className="text-xs font-medium text-slate-600">Realtime voice level</span>
-					<span className="text-xs text-slate-500">{volumeLevel}%</span>
+			{/* Realtime mic level meter — gives the user immediate visual
+			    confirmation that their mic is actually picking up audio.
+			    "0% forever" was the #1 reason scoring saw 0 spoken words. */}
+			<div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+				<div className="flex items-center justify-between mb-1.5">
+					<span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
+						<span className={`inline-block w-2 h-2 rounded-full ${
+							volumeLevel > 10 ? 'bg-green-500 animate-pulse' :
+							isMuted ? 'bg-amber-500' : 'bg-slate-300'
+						}`} />
+						{isMuted ? 'Mic muted'
+							: volumeLevel > 10 ? '✅ Mic is picking up your voice'
+							: '🎙️ Mic is silent — speak louder or check your microphone'}
+					</span>
+					<span className="text-xs text-slate-500 tabular-nums">{volumeLevel}%</span>
 				</div>
-				<div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+				<div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
 					<div
-						className="h-2 rounded-full transition-all duration-100"
+						className="h-3 rounded-full transition-all duration-100"
 						style={{
 							width: `${volumeLevel}%`,
-							background: volumeLevel > 70 ? '#22c55e' : volumeLevel > 40 ? '#eab308' : '#94a3b8'
+							background: volumeLevel > 70 ? '#22c55e' : volumeLevel > 30 ? '#eab308' : '#94a3b8'
 						}}
 					></div>
 				</div>
-				<p className="text-[11px] text-slate-500 mt-1">Speaks louder/clearer = higher bar. This is not an official pronunciation score.</p>
+				<p className="text-[11px] text-slate-500 mt-1.5">
+					Aim for the green range while speaking. If this stays at 0% even when you talk, check your
+					browser&apos;s microphone permission or pick a different input device.
+				</p>
 			</div>
 
             {/* Microphone Permission Help */}

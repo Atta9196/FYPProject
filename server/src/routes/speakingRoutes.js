@@ -2116,10 +2116,15 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
         max_response_output_tokens: 120,
         // Server-side VAD: a real examiner waits ~2s of silence before
         // taking a turn so the candidate can finish their thought.
+        //   - threshold 0.5  → OpenAI default; lower than this misses quiet
+        //                      speakers and we end up with "0 spoken words".
+        //   - prefix_padding 500ms → capture the first syllable of the first
+        //                            word, otherwise quick starts get clipped.
+        //   - silence_duration 2000ms → patient turn-taking.
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.55,
-          prefix_padding_ms: 300,
+          threshold: 0.5,
+          prefix_padding_ms: 500,
           silence_duration_ms: 2000
         }
       })

@@ -46,6 +46,7 @@ function VoiceSessionSummary({ summary, onClose }) {
     if (!summary) return null;
     const { bandScore, scores, feedback, summary: s, capReasons, transcript, wordCount, durationSec } = summary;
     const bandDisplay = typeof bandScore === "number" ? bandScore.toFixed(1) : "--";
+    const noSpeech = (wordCount ?? 0) === 0 && (durationSec ?? 0) < 1;
     const criteria = [
         { key: "fluency", label: "Fluency & Coherence" },
         { key: "lexical", label: "Lexical Resource" },
@@ -79,6 +80,24 @@ function VoiceSessionSummary({ summary, onClose }) {
 
     return (
         <div className="space-y-5">
+            {noSpeech && (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:p-5 shadow-sm">
+                    <p className="text-sm font-semibold text-amber-900">
+                        ⚠️ No speech was captured from your microphone.
+                    </p>
+                    <p className="text-xs text-amber-800 mt-1.5 leading-relaxed">
+                        That&apos;s why the band shows 0. Most often this means the browser couldn&apos;t hear you.
+                        Please check:
+                    </p>
+                    <ul className="mt-2 text-xs text-amber-800 space-y-1 list-disc list-inside">
+                        <li>The microphone icon in your browser&apos;s address bar shows &quot;Allowed&quot;.</li>
+                        <li>You are not muted in your operating system (volume mixer / system tray).</li>
+                        <li>The correct input device is selected (headset vs. built-in mic).</li>
+                        <li>Speak clearly and a little louder — watch the green mic level bar move while you talk.</li>
+                        <li>Start a new session and answer the examiner with full sentences (not one word).</li>
+                    </ul>
+                </div>
+            )}
             <div className="bg-white rounded-2xl shadow p-5 sm:p-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-center border border-slate-200">
                 <div className="md:col-span-2 text-center md:text-left">
                     <p className="text-xs uppercase tracking-wide text-slate-500">Overall Speaking Band</p>
