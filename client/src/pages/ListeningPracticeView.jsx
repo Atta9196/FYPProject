@@ -9,8 +9,52 @@ import {
     saveCachedGeneration,
 } from "../services/api/generationCacheApi";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants — official IELTS Listening structure
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOTAL_TEST_SECONDS = 30 * 60; // 30-minute IELTS Listening
+const SECTION_QUESTIONS_PER = 10;
+const TOTAL_QUESTIONS = 40;
+
+const TIMER_WARNINGS = [
+    { atSeconds: 10 * 60, label: "10 minutes remaining", tone: "info" },
+    { atSeconds: 5 * 60, label: "5 minutes remaining", tone: "warning" },
+    { atSeconds: 60, label: "1 minute remaining", tone: "critical" },
+];
+
+// Each official IELTS section has a specific topic + a question-template hint.
+// We use the hint to pick a presentation style; the actual question.type from
+// the AI still drives input rendering (radio / dropdown / text).
+const SECTION_BLUEPRINT = {
+    1: {
+        topic: "Daily Life Conversation",
+        templateHint: "form",
+        description: "Form / Note / Short-answer completion",
+    },
+    2: {
+        topic: "Information Talk",
+        templateHint: "monologue",
+        description: "MCQs, Matching, Map / Plan labelling",
+    },
+    3: {
+        topic: "Academic Discussion",
+        templateHint: "discussion",
+        description: "MCQs, Matching information, Sentence completion",
+    },
+    4: {
+        topic: "Academic Lecture",
+        templateHint: "notes",
+        description: "Notes, Summary, Table completion",
+    },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// History storage (unchanged — preserves existing dashboard integration)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function getStorageKey(userId) {
-    return getStorageKeyForModule('listening', userId) || "ielts-listening-history";
+    return getStorageKeyForModule("listening", userId) || "ielts-listening-history";
 }
 
 function loadHistory(userId) {
@@ -33,6 +77,51 @@ function saveHistory(entries, userId) {
     window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// In-progress answer persistence (NEW — refresh-safe)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function answersStorageKey(testId) {
+    return `ielts-listening-answers-${testId || "pending"}`;
+}
+
+function loadPersistedAnswers(testId) {
+    if (typeof window === "undefined" || !testId) return {};
+    try {
+        const raw = window.localStorage.getItem(answersStorageKey(testId));
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function persistAnswers(testId, answers) {
+    if (typeof window === "undefined" || !testId) return;
+    try {
+        window.localStorage.setItem(
+            answersStorageKey(testId),
+            JSON.stringify(answers || {})
+        );
+    } catch {
+        // localStorage quota or disabled — silently ignore
+    }
+}
+
+function clearPersistedAnswers(testId) {
+    if (typeof window === "undefined" || !testId) return;
+    try {
+        window.localStorage.removeItem(answersStorageKey(testId));
+    } catch {
+        // ignore
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IELTS band table + scoring helpers (unchanged logic)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const bandTable = [
     { min: 39, band: "9" },
     { min: 37, band: "8.5" },
@@ -43,22 +132,13 @@ const bandTable = [
     { min: 23, band: "6" },
     { min: 18, band: "5.5" },
     { min: 16, band: "5" },
-    { min: 0, band: "4.5 or below" }
+    { min: 0, band: "4.5 or below" },
 ];
 
-const defaultSectionState = (section) => ({
-    phase: "idle",
-    timeRemaining: section.durationSeconds,
-    reviewRemaining: section.reviewSeconds,
-    audioStarted: false,
-    audioEnded: false,
-    answers: {},
-    submitted: false,
-    score: 0,
-    questionFeedback: {},
-    bandEstimate: null,
-    audioError: null
-});
+const getBandFromScore = (score) => {
+    const bandEntry = bandTable.find((entry) => score >= entry.min);
+    return bandEntry ? bandEntry.band : "N/A";
+};
 
 const normalizeAnswer = (value = "") =>
     value
@@ -88,7 +168,6 @@ function normalizeOption(option) {
     return value || label ? { value: value || label, label: label || value } : null;
 }
 
-/** Short, exact hint for fill-in boxes, based on the actual answer shape. */
 function getFillInstruction(question) {
     const rawAnswers = Array.isArray(question.answer) ? question.answer : [question.answer];
     const answers = rawAnswers
@@ -101,9 +180,7 @@ function getFillInstruction(question) {
     if (answers.length) {
         const tokensList = answers.map(tokenize);
         const allFirstNumeric = tokensList.every((tokens) => tokens.length && isNumberToken(tokens[0]));
-        if (allFirstNumeric) {
-            return "Number only.";
-        }
+        if (allFirstNumeric) return "Number only.";
 
         const lengths = tokensList.map((t) => t.length);
         const sameLength = lengths.every((len) => len === lengths[0]);
@@ -142,7 +219,7 @@ function evaluateQuestion(question, rawAnswer) {
             isCorrect: false,
             message: "No answer provided.",
             correctAnswer: getCorrectLabel(question),
-            userAnswer: ""
+            userAnswer: "",
         };
     }
 
@@ -151,7 +228,7 @@ function evaluateQuestion(question, rawAnswer) {
             isCorrect: false,
             message: `Exceeded word limit (maximum ${question.maxWords} word${question.maxWords > 1 ? "s" : ""}).`,
             correctAnswer: getCorrectLabel(question),
-            userAnswer
+            userAnswer,
         };
     }
 
@@ -161,7 +238,7 @@ function evaluateQuestion(question, rawAnswer) {
             isCorrect,
             message: isCorrect ? "Correct" : "Incorrect option selected.",
             correctAnswer: getCorrectLabel(question),
-            userAnswer
+            userAnswer,
         };
     }
 
@@ -173,78 +250,117 @@ function evaluateQuestion(question, rawAnswer) {
         isCorrect,
         message: isCorrect ? "Correct" : "Answer does not match exactly.",
         correctAnswer: acceptableAnswers.join(" / "),
-        userAnswer
+        userAnswer,
     };
 }
 
 function evaluateSection(section, answers) {
     let correctCount = 0;
     const feedback = {};
-
     section.questions.forEach((question) => {
-        const questionFeedback = evaluateQuestion(question, answers[question.id]);
-        feedback[question.id] = questionFeedback;
-        if (questionFeedback.isCorrect) {
-            correctCount += 1;
-        }
+        const result = evaluateQuestion(question, answers[question.id]);
+        feedback[question.id] = result;
+        if (result.isCorrect) correctCount += 1;
     });
-
     return { correctCount, feedback };
 }
 
-const getBandFromScore = (score) => {
-    const bandEntry = bandTable.find((entry) => score >= entry.min);
-    return bandEntry ? bandEntry.band : "N/A";
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Small UI helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-const phaseLabels = {
-    idle: "Not started",
-    playing: "In progress",
-    "awaiting-audio": "Waiting for audio",
-    "awaiting-timer": "Waiting for timer",
-    review: "Review time",
-    completed: "Completed"
-};
+function formatMMSS(totalSeconds) {
+    const safe = Math.max(0, totalSeconds | 0);
+    const mins = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+function countAnsweredInSection(section, answers) {
+    if (!section?.questions) return 0;
+    return section.questions.reduce((acc, q) => {
+        const val = answers[q.id];
+        return acc + (val !== undefined && String(val).trim() !== "" ? 1 : 0);
+    }, 0);
+}
+
+function blueprintFor(sectionId) {
+    return SECTION_BLUEPRINT[sectionId] || SECTION_BLUEPRINT[1];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main view
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function ListeningPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
+
+    // Data
     const [listeningSections, setListeningSections] = useState([]);
-    const [totalListeningQuestions, setTotalListeningQuestions] = useState(40);
+    const [testId, setTestId] = useState(null);
+    const [totalListeningQuestions, setTotalListeningQuestions] = useState(TOTAL_QUESTIONS);
+
+    // Loading
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
     const [errorMessage, setErrorMessage] = useState(null);
+
+    // Navigation
     const [activeSectionId, setActiveSectionId] = useState(null);
-    const [sectionStates, setSectionStates] = useState({});
+
+    // Unified answers map (questionId → value), persisted to localStorage
+    const [allAnswers, setAllAnswers] = useState({});
+
+    // Per-section audio meta (replay-locked)
+    const [sectionAudio, setSectionAudio] = useState({}); // { sectionId: { started, ended, error } }
     const audioRefs = useRef({});
+
+    // Single 30-minute test timer
+    const [testPhase, setTestPhase] = useState("idle"); // 'idle' | 'running' | 'completed'
+    const [timeRemaining, setTimeRemaining] = useState(TOTAL_TEST_SECONDS);
+    const [activeWarning, setActiveWarning] = useState(null);
+    const lastWarningAtRef = useRef(null);
+
+    // Submission
+    const [submitting, setSubmitting] = useState(false);
+    const [results, setResults] = useState(null);
 
     const apiBase = typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL
         ? import.meta.env.VITE_API_BASE_URL
         : "https://ielts-coach-backend.onrender.com";
 
-    // Apply a payload (cached or fresh) to component state.
+    // ── Loaders ──────────────────────────────────────────────────────────────
+
     const applyListeningPayload = useCallback((payload) => {
         const sections = payload?.sections || [];
         if (!sections.length) return false;
-        setListeningSections(sections);
-        setTotalListeningQuestions(payload.totalQuestions || 40);
 
-        const initialStates = sections.reduce((acc, section) => {
-            acc[section.id] = defaultSectionState(section);
+        setListeningSections(sections);
+        setTestId(payload?.testId || null);
+        setTotalListeningQuestions(payload?.totalQuestions || TOTAL_QUESTIONS);
+
+        const audioInit = sections.reduce((acc, s) => {
+            acc[s.id] = { started: false, ended: false, error: null };
             return acc;
         }, {});
-        setSectionStates(initialStates);
+        setSectionAudio(audioInit);
         setActiveSectionId(sections[0].id);
+
+        // Restore persisted in-progress answers if they belong to this test
+        const persisted = loadPersistedAnswers(payload?.testId);
+        setAllAnswers(persisted || {});
+
+        // Reset timer state for the new test
+        setTimeRemaining(TOTAL_TEST_SECONDS);
+        setTestPhase("idle");
+        setResults(null);
+        setActiveWarning(null);
+        lastWarningAtRef.current = null;
+
         if (embedded && typeof onReady === "function") onReady();
         return true;
     }, [embedded, onReady]);
 
-    /**
-     * Cache-first listening loader.
-     *   force=false → return cached test if present (audio is lazily rebuilt
-     *                 server-side via the script cache so revisits don't
-     *                 re-call OpenAI for content)
-     *   force=true  → ignore cache and regenerate (Regenerate button)
-     */
     const loadAIGeneratedListening = useCallback(async ({ force = false } = {}) => {
         try {
             setGenerating(true);
@@ -252,9 +368,7 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
 
             if (!force) {
                 const cached = await getCachedGeneration("listening");
-                if (cached && applyListeningPayload(cached)) {
-                    return;
-                }
+                if (cached && applyListeningPayload(cached)) return;
             } else {
                 await clearCachedGeneration("listening");
             }
@@ -264,15 +378,11 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
 
             if (data.success && data.sections) {
                 applyListeningPayload(data);
-                // Cache the freshly generated test. The server will retain
-                // the dialogue/listening scripts in Firestore so audio can
-                // be rebuilt on demand later without re-running content
-                // generation.
                 saveCachedGeneration("listening", {
                     success: true,
                     testId: data.testId,
                     sections: data.sections,
-                    totalQuestions: data.totalQuestions || 40,
+                    totalQuestions: data.totalQuestions || TOTAL_QUESTIONS,
                 });
             } else {
                 throw new Error(data.error || "Failed to generate listening test");
@@ -297,290 +407,218 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
         }
     }, [apiBase, applyListeningPayload]);
 
-    // Load initial listening test on mount (cache-first).
     useEffect(() => {
         loadAIGeneratedListening();
     }, [loadAIGeneratedListening]);
 
+    // Active section reference
     const activeSection = useMemo(
-        () => listeningSections.find((section) => section.id === activeSectionId),
+        () => listeningSections.find((s) => s.id === activeSectionId),
         [listeningSections, activeSectionId]
     );
 
-    const overallStats = useMemo(() => {
-        let answered = 0;
-        let correct = 0;
-        listeningSections.forEach((section) => {
-            const state = sectionStates[section.id];
-            answered += Object.values(state.answers).filter((value) => value !== undefined && value !== "").length;
-            if (state.submitted) {
-                correct += state.score;
-            }
-        });
-        const band = getBandFromScore(correct);
-        return { answered, correct, band };
-    }, [sectionStates]);
+    // ── Answer handling ─────────────────────────────────────────────────────
 
-    const updateSectionState = useCallback(
-        (sectionId, updater) => {
-            setSectionStates((prev) => ({
-                ...prev,
-                [sectionId]: {
-                    ...prev[sectionId],
-                    ...updater(prev[sectionId])
-                }
-            }));
-        },
-        [setSectionStates]
-    );
-
-    const handleAudioEnded = useCallback(
-        (sectionId) => {
-            updateSectionState(sectionId, (current) => {
-                const nextState = {
-                    ...current,
-                    audioEnded: true
-                };
-                if (current.timeRemaining === 0) {
-                    nextState.phase = "review";
-                } else {
-                    nextState.phase = "awaiting-timer";
-                }
-                return nextState;
-            });
-        },
-        [updateSectionState]
-    );
-
-    const handlePlayAudio = useCallback(
-        (sectionId) => {
-            const audioElement = audioRefs.current[sectionId];
-            const section = listeningSections.find((item) => item.id === sectionId);
-            if (!audioElement || !section) return;
-
-            updateSectionState(sectionId, (current) => {
-                if (current.audioStarted) return current;
-                return {
-                    ...defaultSectionState(section),
-                    phase: "playing",
-                    audioStarted: true,
-                    audioError: null
-                };
-            });
-
-            audioElement.currentTime = 0;
-            audioElement.load();
-            audioElement.play().catch((err) => {
-                console.error("Listening audio play failed:", err);
-                updateSectionState(sectionId, () => ({
-                    audioError: "Audio failed to load or play. Ensure the server is running (port 5000) and try again.",
-                    audioStarted: false,
-                    phase: "idle"
-                }));
-            });
-        },
-        [updateSectionState, listeningSections]
-    );
-
-    const handleAnswerChange = useCallback((sectionId, questionId, value) => {
-        setSectionStates((prev) => {
-            const current = prev[sectionId];
-            if (current.submitted) return prev;
-            return {
-                ...prev,
-                [sectionId]: {
-                    ...current,
-                    answers: {
-                        ...current.answers,
-                        [questionId]: value
-                    }
-                }
-            };
+    const handleAnswerChange = useCallback((questionId, value) => {
+        setAllAnswers((prev) => {
+            const next = { ...prev, [questionId]: value };
+            return next;
         });
     }, []);
 
-    const handleSubmitSection = useCallback(
-        (sectionId) => {
-            const section = listeningSections.find((item) => item.id === sectionId);
-            if (!section) return;
-            setSectionStates((prev) => {
-                const current = prev[sectionId];
-                if (current.submitted) return prev;
-                const { correctCount, feedback } = evaluateSection(section, current.answers);
-                const updated = {
-                    ...current,
-                    phase: "completed",
-                    reviewRemaining: 0,
-                    submitted: true,
+    // Persist on every change (refresh-safe)
+    useEffect(() => {
+        if (!testId) return;
+        persistAnswers(testId, allAnswers);
+    }, [allAnswers, testId]);
+
+    // ── Audio handling (single play, mirrors previous behaviour) ────────────
+
+    const handlePlayAudio = useCallback((sectionId) => {
+        const audio = audioRefs.current[sectionId];
+        const section = listeningSections.find((s) => s.id === sectionId);
+        if (!audio || !section) return;
+        const meta = sectionAudio[sectionId];
+        if (meta?.started) return; // single-play lock
+
+        // First audio play starts the 30-minute test timer
+        if (testPhase === "idle") setTestPhase("running");
+
+        try {
+            audio.currentTime = 0;
+            audio.load();
+            audio
+                .play()
+                .then(() => {
+                    setSectionAudio((prev) => ({
+                        ...prev,
+                        [sectionId]: { started: true, ended: false, error: null },
+                    }));
+                })
+                .catch((err) => {
+                    console.error("Listening audio play failed:", err);
+                    setSectionAudio((prev) => ({
+                        ...prev,
+                        [sectionId]: {
+                            started: false,
+                            ended: false,
+                            error: "Audio failed to play. Try again in a moment.",
+                        },
+                    }));
+                });
+        } catch (err) {
+            console.error("Listening audio start error:", err);
+        }
+    }, [listeningSections, sectionAudio, testPhase]);
+
+    const handleAudioEnded = useCallback((sectionId) => {
+        setSectionAudio((prev) => ({
+            ...prev,
+            [sectionId]: { ...(prev[sectionId] || {}), ended: true },
+        }));
+    }, []);
+
+    // ── Test timer ───────────────────────────────────────────────────────────
+
+    useEffect(() => {
+        if (testPhase !== "running") return;
+        if (timeRemaining <= 0) return;
+        const id = setInterval(() => {
+            setTimeRemaining((prev) => Math.max(0, prev - 1));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [testPhase, timeRemaining]);
+
+    // Threshold warnings (each fires at most once per test)
+    useEffect(() => {
+        if (testPhase !== "running") return;
+        const due = TIMER_WARNINGS.find(
+            (w) => timeRemaining === w.atSeconds && lastWarningAtRef.current !== w.atSeconds
+        );
+        if (due) {
+            lastWarningAtRef.current = due.atSeconds;
+            setActiveWarning(due);
+        }
+    }, [timeRemaining, testPhase]);
+
+    // Auto-dismiss warning toast
+    useEffect(() => {
+        if (!activeWarning) return;
+        const id = setTimeout(() => setActiveWarning(null), 7000);
+        return () => clearTimeout(id);
+    }, [activeWarning]);
+
+    // ── Submission (preserves existing scoring & dashboard wiring) ──────────
+
+    const handleSubmitTest = useCallback(async (auto = false) => {
+        if (submitting || results) return;
+        if (!listeningSections.length) return;
+        setSubmitting(true);
+
+        try {
+            // 1. Per-section scoring (unchanged logic)
+            const sectionResults = listeningSections.map((section) => {
+                const { correctCount, feedback } = evaluateSection(section, allAnswers);
+                return {
+                    sectionId: section.id,
+                    sectionTitle: section.title,
                     score: correctCount,
-                    questionFeedback: feedback,
-                    bandEstimate: getBandFromScore(
-                        correctCount +
-                            listeningSections
-                                .filter((item) => item.id !== sectionId)
-                                .reduce((sum, item) => sum + prev[item.id].score, 0)
-                    )
+                    totalQuestions: section.questions.length,
+                    feedback,
                 };
-                const newState = {
-                    ...prev,
-                    [sectionId]: updated
-                };
-
-                // Move to next section when this one is submitted (manual or auto when time ends)
-                const allSectionsCompleted = listeningSections.every(
-                    (s) => newState[s.id]?.submitted === true
-                );
-                if (!allSectionsCompleted) {
-                    const nextIdx = listeningSections.findIndex((s) => s.id === sectionId) + 1;
-                    if (nextIdx > 0 && nextIdx < listeningSections.length) {
-                        setActiveSectionId(listeningSections[nextIdx].id);
-                    }
-                }
-
-                if (allSectionsCompleted) {
-                    const totalScore = listeningSections.reduce(
-                        (sum, s) => sum + (newState[s.id]?.score || 0),
-                        0
-                    );
-                    const sectionScores = listeningSections.map((s) => ({
-                        sectionId: s.id,
-                        score: newState[s.id]?.score || 0,
-                        total: s.questions.length
-                    }));
-                    const sectionsSummary = listeningSections.map((s) => ({
-                        sectionId: s.id,
-                        sectionTitle: s.title,
-                        score: newState[s.id]?.score || 0,
-                        totalQuestions: s.questions.length
-                    }));
-                    const userId = user?.email || user?.id || null;
-                    // AI-based evaluation then save for dashboard/performance integration
-                    fetch(`${apiBase}/api/listening/evaluate`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            totalScore,
-                            totalQuestions: totalListeningQuestions,
-                            sectionScores
-                        })
-                    })
-                        .then((res) => res.json())
-                        .then((data) => {
-                            const bandScore = data.success && typeof data.bandScore === "number"
-                                ? data.bandScore
-                                : parseFloat(getBandFromScore(totalScore)) || 0;
-                            const historyEntry = {
-                                id: Date.now(),
-                                module: "listening",
-                                totalScore,
-                                totalQuestions: totalListeningQuestions,
-                                band: bandScore,
-                                bandScore,
-                                feedback: data.feedback || `Score: ${totalScore}/${totalListeningQuestions}`,
-                                sections: sectionsSummary,
-                                submittedAt: new Date().toISOString()
-                            };
-                            const existingHistory = loadHistory(userId);
-                            const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                            saveHistory(updatedHistory, userId);
-                            window.dispatchEvent(new Event("progressUpdated"));
-                        })
-                        .catch(() => {
-                            const finalBand = parseFloat(getBandFromScore(totalScore)) || 0;
-                            const historyEntry = {
-                                id: Date.now(),
-                                module: "listening",
-                                totalScore,
-                                totalQuestions: totalListeningQuestions,
-                                band: finalBand,
-                                bandScore: finalBand,
-                                feedback: `Score: ${totalScore}/${totalListeningQuestions}`,
-                                sections: sectionsSummary,
-                                submittedAt: new Date().toISOString()
-                            };
-                            const existingHistory = loadHistory(userId);
-                            const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                            saveHistory(updatedHistory, userId);
-                            window.dispatchEvent(new Event("progressUpdated"));
-                        });
-                }
-
-                return newState;
             });
-        },
-        [setSectionStates, setActiveSectionId, listeningSections, totalListeningQuestions, apiBase, user]
-    );
 
+            const totalScore = sectionResults.reduce((sum, r) => sum + r.score, 0);
+            const totalQuestionsCount = listeningSections.reduce(
+                (sum, s) => sum + (s.questions?.length || 0),
+                0
+            );
+
+            // 2. Call existing AI evaluate endpoint (unchanged)
+            let aiBand = null;
+            let aiFeedback = null;
+            try {
+                const res = await fetch(`${apiBase}/api/listening/evaluate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        totalScore,
+                        totalQuestions: totalQuestionsCount,
+                        sectionScores: sectionResults.map((r) => ({
+                            sectionId: r.sectionId,
+                            score: r.score,
+                            total: r.totalQuestions,
+                        })),
+                    }),
+                });
+                const data = await res.json();
+                if (data?.success) {
+                    if (typeof data.bandScore === "number") aiBand = data.bandScore;
+                    if (data.feedback) aiFeedback = data.feedback;
+                }
+            } catch {
+                // Network failure → fall back to local band table only
+            }
+
+            const finalBand =
+                aiBand != null
+                    ? aiBand
+                    : parseFloat(getBandFromScore(totalScore)) || 0;
+
+            const finalResults = {
+                sections: sectionResults,
+                totalScore,
+                totalQuestions: totalQuestionsCount,
+                band: finalBand,
+                autoSubmitted: auto,
+                feedback:
+                    aiFeedback || `Score: ${totalScore}/${totalQuestionsCount}`,
+                completedAt: new Date().toISOString(),
+            };
+
+            setResults(finalResults);
+            setTestPhase("completed");
+
+            // 3. Save to dashboard history (unchanged format / contract)
+            const sectionsSummary = sectionResults.map((r) => ({
+                sectionId: r.sectionId,
+                sectionTitle: r.sectionTitle,
+                score: r.score,
+                totalQuestions: r.totalQuestions,
+            }));
+            const historyEntry = {
+                id: Date.now(),
+                module: "listening",
+                totalScore,
+                totalQuestions: totalQuestionsCount,
+                band: finalBand,
+                bandScore: finalBand,
+                feedback: finalResults.feedback,
+                sections: sectionsSummary,
+                submittedAt: finalResults.completedAt,
+            };
+            const userId = user?.email || user?.id || null;
+            const existingHistory = loadHistory(userId);
+            const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
+            saveHistory(updatedHistory, userId);
+            window.dispatchEvent(new Event("progressUpdated"));
+
+            // 4. Clear in-progress persisted answers for this test
+            clearPersistedAnswers(testId);
+        } finally {
+            setSubmitting(false);
+        }
+    }, [submitting, results, listeningSections, allAnswers, apiBase, user, testId]);
+
+    // Auto-submit when timer hits zero
     useEffect(() => {
-        const intervals = [];
+        if (embedded) return; // Parent (FullTestSimulator) owns timing in embedded mode
+        if (testPhase === "running" && timeRemaining === 0 && !submitting && !results) {
+            handleSubmitTest(true);
+        }
+    }, [embedded, testPhase, timeRemaining, submitting, results, handleSubmitTest]);
 
-        listeningSections.forEach((section) => {
-            const state = sectionStates[section.id];
-
-            if (state.phase === "playing" && state.timeRemaining > 0) {
-                const intervalId = setInterval(() => {
-                    setSectionStates((prev) => {
-                        const current = prev[section.id];
-                        if (current.phase !== "playing") return prev;
-                        const nextTime = Math.max(current.timeRemaining - 1, 0);
-                        const nextState = { ...current, timeRemaining: nextTime };
-                        if (nextTime === 0) {
-                            nextState.phase = current.audioEnded ? "review" : "awaiting-audio";
-                        }
-                        return {
-                            ...prev,
-                            [section.id]: nextState
-                        };
-                    });
-                }, 1000);
-                intervals.push(intervalId);
-            }
-
-            if (state.phase === "review" && state.reviewRemaining > 0) {
-                const intervalId = setInterval(() => {
-                    setSectionStates((prev) => {
-                        const current = prev[section.id];
-                        if (current.phase !== "review") return prev;
-                        const nextReview = Math.max(current.reviewRemaining - 1, 0);
-                        return {
-                            ...prev,
-                            [section.id]: {
-                                ...current,
-                                reviewRemaining: nextReview
-                            }
-                        };
-                    });
-                }, 1000);
-                intervals.push(intervalId);
-            }
-        });
-
-        return () => intervals.forEach(clearInterval);
-    }, [sectionStates]);
-
-    useEffect(() => {
-        listeningSections.forEach((section) => {
-            const state = sectionStates[section.id];
-
-            if (state.phase === "awaiting-audio" && state.audioEnded) {
-                updateSectionState(section.id, () => ({
-                    phase: "review",
-                    reviewRemaining: listeningSections.find((item) => item.id === section.id)?.reviewSeconds ?? 30
-                }));
-            }
-
-            if (state.phase === "awaiting-timer" && state.timeRemaining === 0) {
-                updateSectionState(section.id, () => ({
-                    phase: "review",
-                    reviewRemaining: listeningSections.find((item) => item.id === section.id)?.reviewSeconds ?? 30
-                }));
-            }
-
-            if (state.phase === "review" && state.reviewRemaining === 0 && !state.submitted) {
-                handleSubmitSection(section.id);
-            }
-        });
-    }, [sectionStates, updateSectionState, handleSubmitSection]);
+    // ── Loading / empty states ──────────────────────────────────────────────
 
     if (loading || generating) {
         const loadingContent = (
@@ -589,7 +627,9 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
                     <h1 className="text-3xl font-extrabold text-sky-700">Generating Listening Test</h1>
                     <p className="text-slate-600 text-sm md:text-base">
-                        {generating ? "Creating AI-generated IELTS Listening test for you..." : "Loading..."}
+                        {generating
+                            ? "Creating AI-generated IELTS Listening test for you..."
+                            : "Loading..."}
                     </p>
                 </Panel>
             </div>
@@ -625,51 +665,35 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
         return embedded ? errorContent : <AppLayout>{errorContent}</AppLayout>;
     }
 
-    const activeState = sectionStates[activeSection.id];
-    if (!activeState) {
-        const initContent = (
-            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen flex items-center justify-center">
-                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600 mx-auto mb-4"></div>
-                    <h1 className="text-3xl font-extrabold text-sky-700">Initializing Test</h1>
-                    <p className="text-slate-600 text-sm md:text-base">Setting up listening test sections...</p>
-                </Panel>
-            </div>
-        );
-        return embedded ? initContent : <AppLayout>{initContent}</AppLayout>;
-    }
-    const playbackProgress =
-        1 - activeState.timeRemaining / (activeSection.durationSeconds || 1);
-    const reviewProgress =
-        activeSection.reviewSeconds > 0
-            ? 1 - activeState.reviewRemaining / activeSection.reviewSeconds
-            : 1;
-    // Enable submit when: not submitted AND (in review/completed/awaiting-timer OR user has filled at least one answer)
-    const hasFilledAnswer = Object.values(activeState.answers || {}).some(
-        (v) => v != null && String(v).trim() !== ""
+    const activeAudio = sectionAudio[activeSection.id] || {
+        started: false,
+        ended: false,
+        error: null,
+    };
+
+    const totalAnsweredCount = listeningSections.reduce(
+        (sum, s) => sum + countAnsweredInSection(s, allAnswers),
+        0
     );
-    const inReviewPhase =
-        activeState.phase === "review" ||
-        activeState.phase === "completed" ||
-        activeState.phase === "awaiting-timer";
-    const canSubmit =
-        !activeState.submitted && (inReviewPhase || hasFilledAnswer);
-    const submitDisabled = !canSubmit;
+
+    // ── Main view ────────────────────────────────────────────────────────────
 
     const mainContent = (
-        <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
+        <div className="space-y-4 sm:space-y-6 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-sky-50 via-white to-blue-50 min-h-screen">
             {!embedded && (
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
-                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-sky-700 break-words">Listening Practice</h1>
+                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-sky-700 break-words">
+                            IELTS Listening Test
+                        </h1>
                         <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">
-                            Follow the official IELTS rules: single-play audio, strict timing, and automatic scoring.
+                            4 sections • 40 questions • 30 minutes • Audio plays once
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <button
                             onClick={() => loadAIGeneratedListening({ force: true })}
-                            disabled={generating}
+                            disabled={generating || testPhase === "running"}
                             className="px-3 sm:px-4 py-2 text-sm font-medium rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                         >
                             {generating ? "🔄 Generating..." : "✨ Generate New Test"}
@@ -684,325 +708,937 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                 </div>
             )}
 
-                <Panel title="Practice Summary" className="bg-white/90 backdrop-blur rounded-2xl shadow-md">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <SummaryItem label="Questions Answered" value={`${overallStats.answered} / ${totalListeningQuestions}`} />
-                        <SummaryItem label="Correct Answers" value={`${overallStats.correct}`} />
-                        <SummaryItem
-                            label="Estimated Band"
-                            value={overallStats.correct ? overallStats.band : "Complete test to calculate"}
+            {results ? (
+                <ResultsView
+                    results={results}
+                    sections={listeningSections}
+                    answers={allAnswers}
+                    onRegenerate={() => loadAIGeneratedListening({ force: true })}
+                />
+            ) : (
+                <>
+                    {!embedded && (
+                        <TestTimerBar
+                            timeRemaining={timeRemaining}
+                            totalSeconds={TOTAL_TEST_SECONDS}
+                            phase={testPhase}
+                            warning={activeWarning}
+                            answeredCount={totalAnsweredCount}
+                            totalQuestions={totalListeningQuestions}
+                            onSubmit={() => handleSubmitTest(false)}
+                            submitting={submitting}
                         />
-                    </div>
-                </Panel>
+                    )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
-                    <Panel title="Sections" className="bg-white/80 backdrop-blur rounded-2xl shadow-md space-y-4">
-                        {listeningSections.map((section) => {
-                            const state = sectionStates[section.id];
-                            const isActive = section.id === activeSectionId;
-                            return (
-                                <button
-                                    key={section.id}
-                                    type="button"
-                                    onClick={() => setActiveSectionId(section.id)}
-                                    className={`w-full text-left px-4 py-3 rounded-xl border transition-all duration-200 ${
-                                        isActive
-                                            ? "border-sky-500 bg-sky-50 shadow-sm"
-                                            : "border-slate-200 hover:bg-slate-50"
-                                    }`}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-semibold text-slate-800">{section.title}</p>
-                                            <p className="text-xs text-slate-500">{section.questionRange}</p>
-                                        </div>
-                                        <StatusBadge phase={state.phase} submitted={state.submitted} />
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </Panel>
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-6 max-w-7xl mx-auto">
+                        <SectionSidebar
+                            sections={listeningSections}
+                            activeId={activeSection.id}
+                            onSelect={setActiveSectionId}
+                            answers={allAnswers}
+                            audio={sectionAudio}
+                        />
 
-                    <Panel
-                        title={activeSection.title}
-                        className="lg:col-span-2 bg-white/90 backdrop-blur rounded-2xl shadow-md space-y-6"
-                    >
-                        <div className="space-y-2">
-                            <p className="text-sm font-medium text-sky-700 uppercase tracking-wide">
-                                {activeSection.context}
-                            </p>
-                            <p className="text-sm text-slate-600">
-                                Audio length: {Math.round(activeSection.durationSeconds / 60)} minutes • Review window:{" "}
-                                {activeSection.reviewSeconds} seconds
-                            </p>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div className="flex items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => handlePlayAudio(activeSection.id)}
-                                    disabled={activeState.audioStarted}
-                                    className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors ${
-                                        activeState.audioStarted
-                                            ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                                            : "bg-sky-600 text-white hover:bg-sky-700"
-                                    }`}
-                                >
-                                    {activeState.audioStarted ? "Audio Locked" : "Play Audio (once)"}
-                                </button>
-                                <span className="text-xs text-slate-500">
-                                    Audio can only be played once. It locks after playback ends.
-                                </span>
-                            </div>
-                            {activeState.audioError && (
-                                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
-                                    {activeState.audioError}
-                                </p>
-                            )}
-
-                            <audio
-                                ref={(element) => {
-                                    if (element) {
-                                        audioRefs.current[activeSection.id] = element;
-                                    }
-                                }}
-                                src={activeSection.audioUrl}
-                                preload="auto"
-                                className="hidden"
-                                onEnded={() => handleAudioEnded(activeSection.id)}
-                                onError={(e) => {
-                                    const msg = e?.target?.error?.message || "Audio failed to load";
-                                    console.error("Listening audio load error:", msg);
-                                    updateSectionState(activeSection.id, (s) => ({
-                                        ...s,
-                                        audioError: "Audio failed to load. Check server and network.",
-                                        audioStarted: false,
-                                        phase: "idle"
-                                    }));
-                                }}
-                            />
-
-                            <TimerBar
-                                label="Section timer"
-                                progress={playbackProgress}
-                                remaining={activeState.timeRemaining}
-                                accent="bg-sky-500"
-                            />
-
-                            {activeState.phase === "review" || activeState.phase === "completed" ? (
-                                <TimerBar
-                                    label="Review window"
-                                    progress={reviewProgress}
-                                    remaining={activeState.reviewRemaining}
-                                    accent="bg-emerald-500"
-                                />
-                            ) : (
-                                <p className="text-xs text-slate-500">
-                                    Review time unlocks after the recording finishes and the timer reaches zero.
-                                </p>
-                            )}
-                        </div>
-
-                        <div className="space-y-5">
-                            {activeSection.questions.map((question) => {
-                                const currentValue = activeState.answers[question.id] ?? "";
-                                const feedback = activeState.questionFeedback[question.id];
-                                return (
-                                    <QuestionCard
-                                        key={question.id}
-                                        question={question}
-                                        value={currentValue}
-                                        disabled={activeState.submitted}
-                                        onChange={(value) => handleAnswerChange(activeSection.id, question.id, value)}
-                                        feedback={feedback}
-                                        showFeedback={activeState.submitted}
-                                    />
-                                );
-                            })}
-                        </div>
-
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                            <button
-                                type="button"
-                                onClick={() => handleSubmitSection(activeSection.id)}
-                                disabled={submitDisabled}
-                                className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
-                                    submitDisabled
-                                        ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                                        : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                                }`}
+                        <div className="lg:col-span-3 space-y-4">
+                            <Panel
+                                title={`${activeSection.title} — ${blueprintFor(activeSection.id).topic}`}
+                                className="bg-white/90 backdrop-blur rounded-2xl shadow-md space-y-5"
                             >
-                                {activeState.submitted ? "Section Submitted" : "Submit Section"}
-                            </button>
-                            <div className="text-xs text-slate-500">
-                                The system auto-submits when review time ends. You can submit early once review opens.
-                            </div>
-                        </div>
+                                <SectionMetaHeader section={activeSection} />
 
-                        {activeState.submitted && (
-                            <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-3">
-                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                                    <p className="text-sm font-semibold text-slate-700">
-                                        Section score: {activeState.score} / {activeSection.questions.length}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                        Correct answers earn 1 mark each. Overall band converts after all sections.
-                                    </p>
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                    Feedback includes correct answers, your responses, and supporting notes.
-                                </p>
-                            </div>
-                        )}
-                    </Panel>
-                </div>
-            </div>
+                                <AudioPlayerCard
+                                    section={activeSection}
+                                    audio={activeAudio}
+                                    onPlay={() => handlePlayAudio(activeSection.id)}
+                                    onEnded={() => handleAudioEnded(activeSection.id)}
+                                    onError={(msg) =>
+                                        setSectionAudio((prev) => ({
+                                            ...prev,
+                                            [activeSection.id]: {
+                                                ...(prev[activeSection.id] || {}),
+                                                error: msg,
+                                                started: false,
+                                            },
+                                        }))
+                                    }
+                                    registerRef={(el) => {
+                                        if (el) audioRefs.current[activeSection.id] = el;
+                                    }}
+                                />
+
+                                <QuestionPalette
+                                    sections={listeningSections}
+                                    activeSectionId={activeSection.id}
+                                    answers={allAnswers}
+                                    onJumpToSection={(sid) => setActiveSectionId(sid)}
+                                />
+
+                                <SectionQuestions
+                                    section={activeSection}
+                                    answers={allAnswers}
+                                    onChange={handleAnswerChange}
+                                />
+
+                                <SectionFooterNav
+                                    sections={listeningSections}
+                                    activeId={activeSection.id}
+                                    onSelect={setActiveSectionId}
+                                    onSubmit={() => handleSubmitTest(false)}
+                                    submitting={submitting}
+                                    embedded={embedded}
+                                />
+                            </Panel>
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
     );
 
     return embedded ? mainContent : <AppLayout>{mainContent}</AppLayout>;
 }
 
-function TimerBar({ label, progress, remaining, accent }) {
-    const percent = Math.min(Math.max(progress * 100, 0), 100);
-    const minutes = Math.floor(remaining / 60);
-    const seconds = remaining % 60;
-    return (
-        <div className="space-y-1">
-            <div className="flex items-center justify-between text-xs text-slate-500 uppercase tracking-wide">
-                <span>{label}</span>
-                <span>
-                    {minutes}:{seconds.toString().padStart(2, "0")}
-                </span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
-                <div className={`h-full ${accent}`} style={{ width: `${percent}%`, transition: "width 1s linear" }} />
-            </div>
-        </div>
-    );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components (UI only)
+// ─────────────────────────────────────────────────────────────────────────────
 
-function SummaryItem({ label, value }) {
-    return (
-        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-2 text-xl font-semibold text-slate-800">{value}</p>
-        </div>
-    );
-}
+function TestTimerBar({
+    timeRemaining,
+    totalSeconds,
+    phase,
+    warning,
+    answeredCount,
+    totalQuestions,
+    onSubmit,
+    submitting,
+}) {
+    const elapsed = Math.max(0, totalSeconds - timeRemaining);
+    const progress = Math.min(100, (elapsed / totalSeconds) * 100);
+    const isCritical = timeRemaining <= 60;
+    const isWarning = timeRemaining > 60 && timeRemaining <= 5 * 60;
+    const isCaution = timeRemaining > 5 * 60 && timeRemaining <= 10 * 60;
 
-function StatusBadge({ phase, submitted }) {
-    const label = phaseLabels[phase] ?? "In progress";
-    const color =
-        submitted || phase === "completed"
-            ? "bg-emerald-100 text-emerald-700"
-            : phase === "playing"
-            ? "bg-sky-100 text-sky-700"
-            : phase === "review"
-            ? "bg-amber-100 text-amber-700"
-            : "bg-slate-100 text-slate-600";
-    return (
-        <span className={`rounded-full px-3 py-1 text-xs font-medium ${color}`}>
-            {submitted ? "Completed" : label}
-        </span>
-    );
-}
+    const timerColor = isCritical
+        ? "text-red-600"
+        : isWarning
+        ? "text-orange-600"
+        : isCaution
+        ? "text-amber-600"
+        : "text-slate-800";
 
-function QuestionCard({ question, value, onChange, disabled, feedback, showFeedback }) {
+    const barColor = isCritical
+        ? "bg-red-500"
+        : isWarning
+        ? "bg-orange-500"
+        : isCaution
+        ? "bg-amber-500"
+        : "bg-sky-500";
+
     return (
-        <div className="rounded-xl border border-slate-200 p-4 space-y-3 bg-white shadow-sm">
-                <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-800">
-                        Q{question.number ?? question.id}. {getQuestionPrompt(question)}
-                    </p>
-                    <span className="text-xs uppercase tracking-wide text-slate-400">{question.type}</span>
+        <div className="sticky top-0 z-20 -mx-3 sm:-mx-4 md:-mx-6 lg:-mx-8 px-3 sm:px-4 md:px-6 lg:px-8 py-3 bg-white/85 backdrop-blur-md border-b border-slate-200 shadow-sm">
+            <div className="max-w-7xl mx-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-4 min-w-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs uppercase tracking-wide text-slate-500">
+                            Time Remaining
+                        </span>
+                        <span
+                            className={`text-2xl sm:text-3xl font-mono font-extrabold tabular-nums ${timerColor} ${
+                                isCritical ? "animate-pulse" : ""
+                            }`}
+                        >
+                            {formatMMSS(timeRemaining)}
+                        </span>
+                    </div>
+                    <div className="hidden sm:block flex-1 min-w-[120px]">
+                        <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                            <div
+                                className={`h-full ${barColor} transition-[width] duration-700 ease-linear`}
+                                style={{ width: `${progress}%` }}
+                            />
+                        </div>
+                    </div>
                 </div>
-                {/* Instructions for MCQ shown here; fill-type hint shown once below in input area only */}
-                {(question.type === "multiple" || question.type === "matching") && question.instructions && (
-                    <p className="text-xs text-slate-500">{question.instructions}</p>
-                )}
+
+                <div className="flex items-center gap-3 flex-wrap">
+                    <div className="text-xs text-slate-600">
+                        <span className="font-semibold">{answeredCount}</span>
+                        <span className="text-slate-400"> / {totalQuestions} answered</span>
+                    </div>
+                    {phase === "idle" && (
+                        <span className="text-xs text-slate-500 italic">
+                            Timer starts on first audio play
+                        </span>
+                    )}
+                    <button
+                        type="button"
+                        onClick={onSubmit}
+                        disabled={submitting}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                        {submitting ? "Submitting..." : "Submit Test"}
+                    </button>
+                </div>
             </div>
 
-            <QuestionInput
-                question={question}
-                value={value}
-                disabled={disabled}
-                onChange={onChange}
-            />
-
-            {showFeedback && feedback && (
+            {warning && (
                 <div
-                    className={`rounded-lg border px-3 py-2 text-sm ${
-                        feedback.isCorrect
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-rose-200 bg-rose-50 text-rose-700"
+                    className={`max-w-7xl mx-auto mt-2 px-4 py-2 rounded-lg text-sm font-medium shadow-sm ${
+                        warning.tone === "critical"
+                            ? "bg-red-100 text-red-800 border border-red-200"
+                            : warning.tone === "warning"
+                            ? "bg-orange-100 text-orange-800 border border-orange-200"
+                            : "bg-amber-100 text-amber-800 border border-amber-200"
                     }`}
+                    role="alert"
                 >
-                    <p className="font-semibold">{feedback.isCorrect ? "Correct" : "Incorrect"}</p>
-                    {!feedback.isCorrect && (
-                        <p className="mt-1">
-                            Your answer:{" "}
-                            <span className="font-medium">{feedback.userAnswer || "—"}</span>
-                        </p>
-                    )}
-                    <p className="mt-1">
-                        Correct answer: <span className="font-medium">{feedback.correctAnswer}</span>
-                    </p>
-                    <p className="mt-1 text-xs text-slate-600">{question.feedback}</p>
+                    ⏰ {warning.label}
                 </div>
             )}
         </div>
     );
 }
 
-function QuestionInput({ question, value, onChange, disabled }) {
+function SectionSidebar({ sections, activeId, onSelect, answers, audio }) {
+    return (
+        <Panel
+            title="Sections"
+            className="bg-white/85 backdrop-blur rounded-2xl shadow-md space-y-3"
+        >
+            {sections.map((section) => {
+                const answered = countAnsweredInSection(section, answers);
+                const total = section.questions?.length || 0;
+                const isActive = section.id === activeId;
+                const audioMeta = audio[section.id] || {};
+                const audioDone = !!audioMeta.started;
+                return (
+                    <button
+                        key={section.id}
+                        type="button"
+                        onClick={() => onSelect(section.id)}
+                        className={`w-full text-left px-3 sm:px-4 py-3 rounded-xl border transition-all ${
+                            isActive
+                                ? "border-sky-500 bg-sky-50 shadow-sm"
+                                : "border-slate-200 hover:bg-slate-50"
+                        }`}
+                    >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-800 truncate">
+                                    {section.title}
+                                </p>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                    {blueprintFor(section.id).topic}
+                                </p>
+                            </div>
+                            <span
+                                className={`shrink-0 inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 ${
+                                    audioDone
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-slate-100 text-slate-500"
+                                }`}
+                                title={audioDone ? "Audio played" : "Audio not played"}
+                            >
+                                {audioDone ? "🔊" : "▶"}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                                <div
+                                    className={`h-full ${
+                                        answered === total
+                                            ? "bg-emerald-500"
+                                            : "bg-sky-500"
+                                    }`}
+                                    style={{ width: `${total ? (answered / total) * 100 : 0}%` }}
+                                />
+                            </div>
+                            <span className="text-[11px] text-slate-600 tabular-nums">
+                                {answered}/{total}
+                            </span>
+                        </div>
+                    </button>
+                );
+            })}
+            <div className="pt-1 text-[11px] text-slate-500 px-1">
+                Answers are saved automatically. Refresh-safe until you submit.
+            </div>
+        </Panel>
+    );
+}
+
+function SectionMetaHeader({ section }) {
+    const bp = blueprintFor(section.id);
+    return (
+        <div className="space-y-1">
+            <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">
+                {bp.topic}
+            </p>
+            <p className="text-sm text-slate-600">{bp.description}</p>
+            <p className="text-xs text-slate-500">
+                Audio length: ~{Math.round((section.durationSeconds || 300) / 60)} minutes •{" "}
+                {section.context || "Listen carefully"}
+            </p>
+        </div>
+    );
+}
+
+function AudioPlayerCard({ section, audio, onPlay, onEnded, onError, registerRef }) {
+    return (
+        <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                <button
+                    type="button"
+                    onClick={onPlay}
+                    disabled={audio.started}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors w-full sm:w-auto ${
+                        audio.started
+                            ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                            : "bg-sky-600 text-white hover:bg-sky-700"
+                    }`}
+                >
+                    {audio.started ? "🔒 Audio Locked" : "▶ Play Audio (once)"}
+                </button>
+                <p className="text-xs text-slate-500">
+                    Audio can only be played once. Replay is disabled — listen carefully.
+                </p>
+            </div>
+            {audio.error && (
+                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-100">
+                    {audio.error}
+                </p>
+            )}
+            <audio
+                ref={registerRef}
+                src={section.audioUrl}
+                preload="auto"
+                className="hidden"
+                onEnded={onEnded}
+                onError={(e) => {
+                    const msg = e?.target?.error?.message || "Audio failed to load";
+                    console.error("Listening audio load error:", msg);
+                    onError("Audio failed to load. Check your connection and try again.");
+                }}
+            />
+        </div>
+    );
+}
+
+function QuestionPalette({ sections, activeSectionId, answers, onJumpToSection }) {
+    // Build a flat list of all questions with metadata
+    const items = [];
+    sections.forEach((section) => {
+        (section.questions || []).forEach((q) => {
+            items.push({
+                qid: q.id,
+                number: q.number ?? q.id,
+                sectionId: section.id,
+                answered:
+                    answers[q.id] !== undefined && String(answers[q.id]).trim() !== "",
+            });
+        });
+    });
+    items.sort((a, b) => a.number - b.number);
+
+    return (
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4 space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Question Navigator
+                </p>
+                <div className="flex items-center gap-3 text-[11px] text-slate-600">
+                    <LegendDot color="bg-slate-200 border-slate-300" label="Not answered" />
+                    <LegendDot color="bg-emerald-500 border-emerald-600" label="Answered" />
+                    <LegendDot color="bg-sky-500 border-sky-600" label="Current section" />
+                </div>
+            </div>
+            <div className="grid grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-10 xl:grid-cols-12 gap-1.5">
+                {items.map((it) => {
+                    const inActiveSection = it.sectionId === activeSectionId;
+                    let cls = "bg-slate-200 text-slate-600 border-slate-300";
+                    if (it.answered) cls = "bg-emerald-500 text-white border-emerald-600";
+                    if (inActiveSection && !it.answered) cls = "bg-sky-500 text-white border-sky-600";
+                    if (inActiveSection && it.answered) cls = "bg-emerald-500 text-white border-emerald-600 ring-2 ring-sky-400";
+                    return (
+                        <button
+                            key={it.qid}
+                            type="button"
+                            onClick={() => onJumpToSection(it.sectionId)}
+                            title={`Question ${it.number} (Section ${it.sectionId})`}
+                            className={`h-8 w-full rounded-md border text-[11px] font-semibold transition-all hover:opacity-90 ${cls}`}
+                        >
+                            {it.number}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+function LegendDot({ color, label }) {
+    return (
+        <span className="inline-flex items-center gap-1.5">
+            <span className={`inline-block w-3 h-3 rounded border ${color}`} />
+            <span>{label}</span>
+        </span>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section question templates
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SectionQuestions({ section, answers, onChange }) {
+    const blueprint = blueprintFor(section.id);
+    const questions = section.questions || [];
+
+    if (!questions.length) {
+        return (
+            <p className="text-sm text-slate-500 italic">
+                No questions available for this section.
+            </p>
+        );
+    }
+
+    // Section 1 → form-completion style for fill-type questions
+    if (blueprint.templateHint === "form") {
+        return (
+            <FormCompletionTemplate
+                questions={questions}
+                answers={answers}
+                onChange={onChange}
+            />
+        );
+    }
+
+    // Section 4 → notes / table / summary style
+    if (blueprint.templateHint === "notes") {
+        return (
+            <NotesCompletionTemplate
+                questions={questions}
+                answers={answers}
+                onChange={onChange}
+                lectureTitle={section.title}
+            />
+        );
+    }
+
+    // Section 2 & 3 → mixed (MCQ + matching dropdowns + sentence completion)
+    return (
+        <MixedTemplate questions={questions} answers={answers} onChange={onChange} />
+    );
+}
+
+function QuestionNumberBadge({ number }) {
+    return (
+        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-sky-100 text-sky-700 text-xs font-bold shrink-0">
+            {number}
+        </span>
+    );
+}
+
+// ──── Section 1: Form Completion ─────────────────────────────────────────────
+
+function FormCompletionTemplate({ questions, answers, onChange }) {
+    return (
+        <div className="rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50/50 to-white p-4 sm:p-5 shadow-inner">
+            <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+                <div>
+                    <p className="text-sm font-semibold text-sky-800">📝 Complete the form</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                        Listen and fill in each blank with the missing information.
+                    </p>
+                </div>
+                <span className="text-[11px] text-slate-500 italic">
+                    Follow the word-limit hints under each field.
+                </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                {questions.map((question) => {
+                    const value = answers[question.id] ?? "";
+                    const number = question.number ?? question.id;
+                    const hint = getFillInstruction(question);
+
+                    if (question.type === "multiple" || question.type === "matching") {
+                        return (
+                            <div
+                                key={question.id}
+                                className="md:col-span-2 rounded-xl border border-slate-200 bg-white/80 p-3 sm:p-4 space-y-2"
+                            >
+                                <div className="flex items-start gap-2">
+                                    <QuestionNumberBadge number={number} />
+                                    <p className="text-sm text-slate-800">
+                                        {getQuestionPrompt(question)}
+                                    </p>
+                                </div>
+                                <QuestionInput
+                                    question={question}
+                                    value={value}
+                                    onChange={(v) => onChange(question.id, v)}
+                                    layout="inline"
+                                />
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <div
+                            key={question.id}
+                            className="rounded-xl border border-slate-200 bg-white px-3 sm:px-4 py-3 shadow-sm space-y-2"
+                        >
+                            <div className="flex items-center gap-2">
+                                <QuestionNumberBadge number={number} />
+                                <label
+                                    htmlFor={`q-${question.id}`}
+                                    className="text-sm font-medium text-slate-700 truncate"
+                                >
+                                    {getQuestionPrompt(question)}
+                                </label>
+                            </div>
+                            <input
+                                id={`q-${question.id}`}
+                                type="text"
+                                value={value}
+                                onChange={(e) => onChange(question.id, e.target.value)}
+                                placeholder="Your answer"
+                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+                            />
+                            <p className="text-[11px] text-slate-500">{hint}</p>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// ──── Section 4: Notes / Table / Summary Completion ─────────────────────────
+
+function NotesCompletionTemplate({ questions, answers, onChange, lectureTitle }) {
+    return (
+        <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/40 to-white p-4 sm:p-5 shadow-inner">
+            <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+                <div>
+                    <p className="text-sm font-semibold text-indigo-800">
+                        📒 Complete the lecture notes
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                        {lectureTitle}: Fill in the missing notes / summary / table entries as
+                        you listen.
+                    </p>
+                </div>
+                <span className="text-[11px] text-slate-500 italic">
+                    Word-limit hints appear under each blank.
+                </span>
+            </div>
+            <ol className="space-y-2 sm:space-y-3">
+                {questions.map((question) => {
+                    const value = answers[question.id] ?? "";
+                    const number = question.number ?? question.id;
+                    const hint = getFillInstruction(question);
+
+                    if (question.type === "multiple" || question.type === "matching") {
+                        return (
+                            <li
+                                key={question.id}
+                                className="rounded-xl border border-slate-200 bg-white px-3 sm:px-4 py-3 shadow-sm space-y-2"
+                            >
+                                <div className="flex items-start gap-2">
+                                    <QuestionNumberBadge number={number} />
+                                    <p className="text-sm text-slate-800">
+                                        {getQuestionPrompt(question)}
+                                    </p>
+                                </div>
+                                <QuestionInput
+                                    question={question}
+                                    value={value}
+                                    onChange={(v) => onChange(question.id, v)}
+                                />
+                            </li>
+                        );
+                    }
+
+                    return (
+                        <li
+                            key={question.id}
+                            className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white/95 px-3 sm:px-4 py-3 shadow-sm"
+                        >
+                            <QuestionNumberBadge number={number} />
+                            <div className="flex-1 min-w-0 space-y-1.5">
+                                <p className="text-sm text-slate-800 leading-relaxed">
+                                    {getQuestionPrompt(question)}
+                                </p>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                    <input
+                                        type="text"
+                                        value={value}
+                                        onChange={(e) => onChange(question.id, e.target.value)}
+                                        placeholder="Your note"
+                                        className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none"
+                                    />
+                                    <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                                        {hint}
+                                    </span>
+                                </div>
+                            </div>
+                        </li>
+                    );
+                })}
+            </ol>
+        </div>
+    );
+}
+
+// ──── Sections 2 & 3: Mixed (MCQ / Matching dropdown / Sentence Completion) ──
+
+function MixedTemplate({ questions, answers, onChange }) {
+    return (
+        <ol className="space-y-3 sm:space-y-4">
+            {questions.map((question) => {
+                const value = answers[question.id] ?? "";
+                const number = question.number ?? question.id;
+                return (
+                    <li
+                        key={question.id}
+                        className="rounded-xl border border-slate-200 bg-white px-3 sm:px-4 py-3 sm:py-4 shadow-sm space-y-3"
+                    >
+                        <div className="flex items-start gap-2">
+                            <QuestionNumberBadge number={number} />
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium text-slate-800 leading-snug">
+                                    {getQuestionPrompt(question)}
+                                </p>
+                                {question.instructions && (
+                                    <p className="text-[11px] text-slate-500 mt-1">
+                                        {question.instructions}
+                                    </p>
+                                )}
+                            </div>
+                            <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-400">
+                                {labelForType(question.type)}
+                            </span>
+                        </div>
+                        <QuestionInput
+                            question={question}
+                            value={value}
+                            onChange={(v) => onChange(question.id, v)}
+                        />
+                    </li>
+                );
+            })}
+        </ol>
+    );
+}
+
+function labelForType(type) {
+    switch (type) {
+        case "multiple":
+            return "MCQ";
+        case "matching":
+            return "Matching";
+        case "fill":
+            return "Sentence completion";
+        default:
+            return type || "Question";
+    }
+}
+
+// ──── Unified input renderer used by all templates ──────────────────────────
+
+function QuestionInput({ question, value, onChange, layout = "block" }) {
     const options = Array.isArray(question.options)
         ? question.options.map(normalizeOption).filter(Boolean)
         : [];
-    if ((question.type === "multiple" || question.type === "matching") && options.length > 0) {
+
+    // Matching → dropdown (per IELTS official format)
+    if (question.type === "matching" && options.length > 0) {
         return (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className={layout === "inline" ? "max-w-md" : ""}>
+                <select
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+                >
+                    <option value="">— Choose —</option>
+                    {options.map((opt, idx) => (
+                        <option key={`${opt.value}-${idx}`} value={opt.value}>
+                            {opt.value}. {opt.label}
+                        </option>
+                    ))}
+                </select>
+            </div>
+        );
+    }
+
+    // Multiple choice → radio buttons
+    if (question.type === "multiple" && options.length > 0) {
+        return (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {options.map((option, idx) => (
                     <label
-                        key={option.value + "-" + idx}
-                        className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        key={`${option.value}-${idx}`}
+                        className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors cursor-pointer ${
                             value === option.value
                                 ? "border-sky-400 bg-sky-50 text-sky-700"
                                 : "border-slate-200 hover:bg-slate-50"
-                        } ${disabled ? "opacity-70 cursor-not-allowed" : "cursor-pointer"}`}
+                        }`}
                     >
                         <input
                             type="radio"
                             name={`question-${question.id}`}
                             value={option.value}
-                            disabled={disabled}
                             checked={value === option.value}
-                            onChange={(event) => onChange(event.target.value)}
+                            onChange={(e) => onChange(e.target.value)}
                             className="h-4 w-4 text-sky-600 focus:ring-sky-500"
                         />
                         <span className="font-medium">{option.value}.</span>
-                        <span>{option.label}</span>
+                        <span className="truncate">{option.label}</span>
                     </label>
                 ))}
             </div>
         );
     }
 
-    const fillHint = getFillInstruction(question);
+    // Sentence completion / fill / short answer → text input
+    const hint = getFillInstruction(question);
     return (
         <div className="space-y-1.5">
-            <p className="text-xs text-slate-500">
-                {fillHint}
-            </p>
             <input
                 type="text"
                 value={value}
-                onChange={(event) => onChange(event.target.value)}
-                disabled={disabled}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500 disabled:bg-slate-100 disabled:text-slate-500"
-                placeholder={fillHint.includes("word") ? "Your answer" : "Your answer"}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder="Your answer"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
             />
+            <p className="text-[11px] text-slate-500">{hint}</p>
+        </div>
+    );
+}
+
+// ──── Section footer navigation (Prev / Next / Submit) ──────────────────────
+
+function SectionFooterNav({ sections, activeId, onSelect, onSubmit, submitting, embedded }) {
+    const idx = sections.findIndex((s) => s.id === activeId);
+    const prev = idx > 0 ? sections[idx - 1] : null;
+    const next = idx >= 0 && idx < sections.length - 1 ? sections[idx + 1] : null;
+    return (
+        <div className="flex items-center justify-between flex-wrap gap-3 pt-3 border-t border-slate-100">
+            <button
+                type="button"
+                onClick={() => prev && onSelect(prev.id)}
+                disabled={!prev}
+                className="px-3 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+                ← Previous section
+            </button>
+            <div className="flex items-center gap-2">
+                {!embedded && (
+                    <button
+                        type="button"
+                        onClick={onSubmit}
+                        disabled={submitting}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                        {submitting ? "Submitting..." : "Submit Test"}
+                    </button>
+                )}
+                <button
+                    type="button"
+                    onClick={() => next && onSelect(next.id)}
+                    disabled={!next}
+                    className="px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-semibold hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    Next section →
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Results view
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ResultsView({ results, sections, answers, onRegenerate }) {
+    const totalPercent = Math.round((results.totalScore / Math.max(1, results.totalQuestions)) * 100);
+    const bandDisplay = typeof results.band === "number" ? results.band.toFixed(1) : results.band;
+
+    return (
+        <div className="space-y-6 max-w-7xl mx-auto">
+            <Panel className="bg-gradient-to-br from-sky-50 to-white border border-sky-100 rounded-2xl shadow-sm">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                    <ScoreStat
+                        label="Overall Score"
+                        value={`${results.totalScore} / ${results.totalQuestions}`}
+                        sub={`${totalPercent}%`}
+                        tone="sky"
+                    />
+                    <ScoreStat
+                        label="Estimated IELTS Band"
+                        value={bandDisplay}
+                        sub="Listening band"
+                        tone="emerald"
+                    />
+                    <ScoreStat
+                        label="Status"
+                        value={results.autoSubmitted ? "Auto-submitted" : "Submitted"}
+                        sub={new Date(results.completedAt).toLocaleString()}
+                        tone="slate"
+                    />
+                </div>
+                {results.feedback && (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
+                        💡 {results.feedback}
+                    </div>
+                )}
+            </Panel>
+
+            <Panel
+                title="Section-wise breakdown"
+                className="bg-white/90 backdrop-blur rounded-2xl shadow-md"
+            >
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                            <tr>
+                                <th className="px-4 py-2">Section</th>
+                                <th className="px-4 py-2">Topic</th>
+                                <th className="px-4 py-2">Score</th>
+                                <th className="px-4 py-2">%</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {results.sections.map((r) => {
+                                const bp = blueprintFor(r.sectionId);
+                                const pct = Math.round((r.score / Math.max(1, r.totalQuestions)) * 100);
+                                return (
+                                    <tr key={r.sectionId} className="hover:bg-sky-50/40">
+                                        <td className="px-4 py-3 font-medium text-slate-800">
+                                            {r.sectionTitle}
+                                        </td>
+                                        <td className="px-4 py-3 text-slate-600">{bp.topic}</td>
+                                        <td className="px-4 py-3 text-slate-700">
+                                            {r.score} / {r.totalQuestions}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-1.5 w-24 rounded-full bg-slate-200 overflow-hidden">
+                                                    <div
+                                                        className={`h-full ${
+                                                            pct >= 75
+                                                                ? "bg-emerald-500"
+                                                                : pct >= 50
+                                                                ? "bg-amber-500"
+                                                                : "bg-rose-500"
+                                                        }`}
+                                                        style={{ width: `${pct}%` }}
+                                                    />
+                                                </div>
+                                                <span className="text-xs text-slate-600 tabular-nums">
+                                                    {pct}%
+                                                </span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </Panel>
+
+            <Panel
+                title="Review answers"
+                className="bg-white/90 backdrop-blur rounded-2xl shadow-md space-y-4"
+            >
+                {sections.map((section) => {
+                    const sr = results.sections.find((r) => r.sectionId === section.id);
+                    const feedback = sr?.feedback || {};
+                    return (
+                        <div key={section.id} className="space-y-2">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                                <p className="text-sm font-semibold text-slate-800">
+                                    {section.title} — {blueprintFor(section.id).topic}
+                                </p>
+                                <span className="text-xs text-slate-500">
+                                    {sr ? `${sr.score} / ${sr.totalQuestions}` : ""}
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {(section.questions || []).map((q) => {
+                                    const fb = feedback[q.id] || {
+                                        isCorrect: false,
+                                        userAnswer: answers[q.id] || "",
+                                        correctAnswer: getCorrectLabel(q),
+                                    };
+                                    return (
+                                        <div
+                                            key={q.id}
+                                            className={`rounded-lg border p-3 text-xs ${
+                                                fb.isCorrect
+                                                    ? "border-emerald-200 bg-emerald-50"
+                                                    : "border-rose-200 bg-rose-50"
+                                            }`}
+                                        >
+                                            <p className="font-semibold text-slate-800">
+                                                Q{q.number ?? q.id}. {getQuestionPrompt(q)}
+                                            </p>
+                                            <p className="mt-1 text-slate-700">
+                                                Your answer:{" "}
+                                                <span className="font-medium">
+                                                    {fb.userAnswer || "—"}
+                                                </span>
+                                            </p>
+                                            {!fb.isCorrect && (
+                                                <p className="mt-0.5 text-slate-700">
+                                                    Correct:{" "}
+                                                    <span className="font-medium">
+                                                        {fb.correctAnswer}
+                                                    </span>
+                                                </p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })}
+            </Panel>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <a
+                    href="/dashboard"
+                    className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+                >
+                    ← Back to Dashboard
+                </a>
+                <button
+                    type="button"
+                    onClick={onRegenerate}
+                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-700 shadow-sm"
+                >
+                    ✨ Generate New Test
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ScoreStat({ label, value, sub, tone = "sky" }) {
+    const palette = {
+        sky: "from-sky-50 to-white text-sky-700",
+        emerald: "from-emerald-50 to-white text-emerald-700",
+        slate: "from-slate-50 to-white text-slate-700",
+    }[tone];
+    return (
+        <div
+            className={`rounded-xl border border-slate-200 bg-gradient-to-br ${palette} p-4 shadow-sm`}
+        >
+            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+            <p className="mt-1 text-2xl sm:text-3xl font-extrabold">{value}</p>
+            {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
         </div>
     );
 }
