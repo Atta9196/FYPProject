@@ -28,6 +28,24 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Allow overriding OpenAI base URL via env (useful for proxied environments)
+const OPENAI_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com').replace(/\/$/, '');
+
+async function fetchOpenAIRealtime(path, options) {
+  const url = `${OPENAI_BASE}${path}`;
+  console.log('➡️ Calling OpenAI Realtime URL:', url);
+  console.log('➡️ Request options:', { method: options.method, headers: options.headers, bodyPresent: !!options.body });
+
+  const response = await fetch(url, options);
+  let text = null;
+  try { text = await response.text(); } catch (e) { console.warn('⚠️ Failed to read response text', e); }
+  let parsed = text;
+  try { parsed = text ? JSON.parse(text) : text; } catch (e) { }
+  console.log('⬅️ OpenAI response status:', response.status);
+  console.log('⬅️ OpenAI response body:', parsed);
+  return { ok: response.ok, status: response.status, bodyText: text, body: parsed };
+}
+
 // Initialize Firestore
 let db;
 try {
@@ -2049,66 +2067,12 @@ router.get("/realtime/token", async (req, res) => {
     }
 
     // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
-        voice: "verse", // Natural voice for IELTS practice
-        modalities: ["text", "audio"], // Enable both text and audio for real-time voice
-        temperature: 0.8,
-        instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
-
-CRITICAL: You must LISTEN CAREFULLY to what the user says and respond DIRECTLY to their questions and statements. Understand the context and meaning, not just keywords.
-
-Personality:
-- Warm, encouraging, genuinely interested in the candidate
-- Show that you're actively listening by referencing specific things they mentioned
-- Ask intelligent follow-up questions that demonstrate understanding
-- Be conversational and natural, like talking to a friend who's also an examiner
-
-Active Listening & Understanding:
-- Pay attention to the FULL meaning of what the user says, not just individual words
-- If they ask a question, ANSWER IT directly and clearly
-- If they share information, acknowledge it and build on it naturally
-- Remember details they mention (work, hobbies, experiences) and reference them later
-- Show genuine curiosity about their responses
-
-Conversation Flow:
-- ALWAYS start by greeting warmly and asking an engaging opening question immediately
-- When the user responds, LISTEN to their full answer before responding
-- Build your next question/comment on what they ACTUALLY said, showing you understood
-- If they ask "What do you think?" or similar, give your opinion naturally
-- If they share something interesting, show enthusiasm and ask for more details
-- Keep responses concise (1-2 sentences) but meaningful and contextually relevant
-
-Response Quality:
-- Respond to the USER'S ACTUAL QUESTION or statement, not a generic template
-- If they ask about your opinion, give it naturally
-- If they share a story, acknowledge it and ask relevant follow-ups
-- If they seem confused, clarify gently
-- Show you're engaged by referencing specific details from their responses
-
-IELTS Practice Focus:
-- Mix Part 1 style questions (personal info, daily life) naturally
-- Gradually introduce Part 3 style questions (opinions, comparisons, abstract topics)
-- Provide gentle, constructive feedback when appropriate
-- Keep the conversation flowing naturally like a real IELTS interview
-
-Proactive Engagement & Patience:
-- BE PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
-- NEVER say "you have not answered me" or "you didn't answer" - this is negative and discouraging
-- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
-- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
-- If the user seems hesitant, be supportive: "Take your time, I'm here to help you practice" or "No pressure, just speak naturally"
-- NEVER pressure the user or make them feel bad for not responding immediately
-- Keep the energy positive, supportive, and encouraging throughout
-- Remember: This is practice - the user may need time to think, especially at the start
-
-Remember: You're having a REAL conversation. Be patient, encouraging, and supportive. Never rush or pressure the user.`,
+    const payload = {
+      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
+      voice: "verse", // Natural voice for IELTS practice
+      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
+      temperature: 0.8,
+      instructions: "You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.",
         // Also transcribe candidate audio so the client gets a live user
         // transcript (drives the boxed feedback at the end).
         input_audio_transcription: { model: "whisper-1" },
@@ -2133,24 +2097,28 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
           create_response: true,
           interrupt_response: true
         }
-      })
-    });
+      };
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
-    }
+        const { ok, status, body } = await fetchOpenAIRealtime('/v1/realtime/sessions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
 
-    const session = await response.json();
+        if (!ok) {
+          throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
+        }
 
-    console.log("✅ Realtime token created:", session.id);
-    console.log("🔑 client_secret exists:", !!session.client_secret);
-    
-    res.json({
-      ...session,
-      success: true,
-      message: "Realtime token created successfully"
-    });
+        const session = body;
+
+        return res.json({
+          ...session,
+          success: true,
+        });
     
   } catch (error) {
     console.error("❌ Error creating Realtime token:", error);

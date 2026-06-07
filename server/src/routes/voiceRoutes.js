@@ -9,6 +9,40 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY 
 });
 
+// Allow overriding OpenAI base URL via env (useful for proxied environments)
+const OPENAI_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com').replace(/\/$/, '');
+
+async function fetchOpenAIRealtime(path, options) {
+  const url = `${OPENAI_BASE}${path}`;
+  console.log('➡️ Calling OpenAI Realtime URL:', url);
+  console.log('➡️ Request options:', {
+    method: options.method,
+    headers: options.headers,
+    // body omitted for brevity in logs if it's large
+    bodyPresent: !!options.body,
+  });
+
+  const response = await fetch(url, options);
+  let text = null;
+  try {
+    text = await response.text();
+  } catch (e) {
+    console.warn('⚠️ Failed to read response text', e);
+  }
+
+  let parsed = text;
+  try {
+    parsed = text ? JSON.parse(text) : text;
+  } catch (e) {
+    // keep raw text if not JSON
+  }
+
+  console.log('⬅️ OpenAI response status:', response.status);
+  console.log('⬅️ OpenAI response body:', parsed);
+
+  return { ok: response.ok, status: response.status, bodyText: text, body: parsed };
+}
+
 /**
  * POST /api/voice/session
  * Create a new Realtime API session for voice conversation
@@ -26,16 +60,10 @@ router.post("/session", async (req, res) => {
 
     // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
     // Using latest model for better real-time voice responses
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for better performance
-        voice: "verse", // "verse" for natural voice, or "alloy", "ash", "ballad", "coral", "echo", "sage"
-        modalities: ["text", "audio"], // Enable both text and audio for real-time voice
+    const payload = {
+      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for better performance
+      voice: "verse", // "verse" for natural voice, or "alloy", "ash", "ballad", "coral", "echo", "sage"
+      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
         instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
 
 MANDATORY RULES - YOU MUST FOLLOW THESE:
@@ -133,15 +161,23 @@ FINAL REMINDER:
           silence_duration_ms: 800 // Shorter silence for faster turn-taking (more natural conversation)
         },
         temperature: 0.7 // Slightly lower for more focused, context-aware responses
-      })
-    });
+      };
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
-    }
+      const { ok, status, body } = await fetchOpenAIRealtime('/v1/realtime/sessions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
 
-    const session = await response.json();
+      if (!ok) {
+        throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
+      }
+
+      const session = body;
 
     console.log("✅ Realtime session created:", session.id);
     console.log("📋 Session object keys:", Object.keys(session));
@@ -189,20 +225,20 @@ router.get("/session/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
     
-    const response = await fetch(`https://api.openai.com/v1/realtime/sessions/${sessionId}`, {
-      method: "GET",
+    const { ok, status, body } = await fetchOpenAIRealtime(`/v1/realtime/sessions/${sessionId}`, {
+      method: 'GET',
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
       }
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
+    if (!ok) {
+      throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
     }
 
-    const session = await response.json();
+    const session = body;
     
     res.json({
       ...session,
@@ -227,17 +263,17 @@ router.delete("/session/:sessionId", async (req, res) => {
   try {
     const { sessionId } = req.params;
     
-    const response = await fetch(`https://api.openai.com/v1/realtime/sessions/${sessionId}`, {
-      method: "DELETE",
+    const { ok, status, body } = await fetchOpenAIRealtime(`/v1/realtime/sessions/${sessionId}`, {
+      method: 'DELETE',
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
       }
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || errorData.error || "Unknown error"}`);
+    if (!ok) {
+      throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
     }
     
     console.log("✅ Session deleted:", sessionId);
