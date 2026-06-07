@@ -1,0 +1,53 @@
+[33m2134370[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m conversation view change
+[33mca4148e[m speaking section changes
+[33maaa657b[m routes changes
+[33mbb6dcda[m realtime speaking solution
+[33mf133a3d[m Mic fixed
+[33mc204624[m Realtime fixed
+[33m43c44ec[m Mic issue fixed
+[33mfe17f9b[m voice route change
+[33m5f20438[m Realtime voice routes changes
+[33m9a27c6c[m speaking routes change
+[33m67c5e61[m Scoring criteria fixed properly according to ielts rules
+[33mb1cd7a8[m Listening practice template fixed
+[33m0023364[m Listening pattern changed
+[33m20bcc76[m Cache first-generation
+[33m12f30ff[m Side baar issue solved
+[33m82823e0[m saving progress data in firebase issue fixed
+[33m4761544[m Menu bar fixed
+[33m3a818ef[m Responsiveness fixed
+[33m2db21de[m google authentication fixed
+[33m5c52983[m google authentication fixed
+[33ma1ceed4[m fixed route issues
+[33mff55bcc[m Fix Vercel React Router routes
+[33m139b2a1[m fixed backend with render by replacing with local host
+[33m1028fcf[m chatbot fixed
+[33m53d4c3a[m Updated game Sections
+[33m30edf41[m project successfully completed
+[33m5e11417[m Change password successfully
+[33m124898c[m forget password issue fixed
+[33me2909ca[m chatbot update
+[33m1611133[m Fixed Every practice section and dashboard integration
+[33m3cdfad2[m updated listening
+[33m4ddc79d[m Add Unity WebGL IELTS game
+[33ma7c797f[m commit game section changes
+[33m2ff161f[m set user progress
+[33m2665d27[m extra files deleted
+[33m43ef789[m  implement ai base on listening and reading
+[33m3278bdb[m reading sections is successfully
+[33m058250b[m Implement reading, writing, and listening practice
+[33mee5fa28[m apply part 1, 2, 3 for speaking
+[33md23b2b4[m React + Vite
+[33m0771e83[m realtime voice agent is successfully implemented
+[33mf219570[m Remove .env file and add to .gitignore
+[33mc18597e[m ai integration
+[33m177769c[m Removed sensitive .env file and cleaned history
+[33m89615c9[m Updated .gitignore to exclude .env and uploads
+[33mfcffa45[m Removed .env from tracking and updated .gitignore
+[33ma5227bd[m Remove .env and add to .gitignore
+[33m297d5aa[m integrate with ai for practice
+[33m1e8192a[m Refactored App.jsx and set LandingPage as default route
+[33m34c1ad5[m Features implementation
+[33m915b935[m  Register/Login with Firebase + React + Vite
+[33mff63846[m Restructure project into client and server folders
+[33m200380d[m Ielt-coach fyp project
