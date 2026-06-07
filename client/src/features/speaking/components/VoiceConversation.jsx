@@ -237,19 +237,6 @@ export function VoiceConversation({ onEndSession }) {
         }
     };
 
-    // Interrupt AI mid-response (Realtime mode)
-    const interruptAI = () => {
-        try {
-            if (realtimeRef.current && typeof realtimeRef.current.interrupt === 'function') {
-                realtimeRef.current.interrupt();
-                setIsPlaying(false);
-                setStatusBanner('⏹ Stopped AI — your turn.');
-            }
-        } catch (err) {
-            console.warn('interruptAI failed:', err);
-        }
-    };
-
     const handleVoiceResponse = (data) => {
         if (data.type === 'session-started') {
             setSessionId(data.sessionId);
@@ -593,6 +580,12 @@ export function VoiceConversation({ onEndSession }) {
 									// never fires `onended`.
 									setIsPlaying(true);
 									setStatusBanner('');
+									// Resume the audio element if it was paused by the
+									// previous auto-interrupt. The MediaStream is still
+									// attached; we just need to call play() again.
+									if (realtimeAudioRef.current && realtimeAudioRef.current.paused) {
+										realtimeAudioRef.current.play().catch(() => {});
+									}
 									// Each delta is the next slice of the AI's spoken sentence.
 									// Accumulate in a ref AND mirror to currentMessage so the UI
 									// shows the AI's words live (subtitle-style) while it speaks.
@@ -658,6 +651,19 @@ export function VoiceConversation({ onEndSession }) {
                                 userSpeechStartedAtRef.current = Date.now();
                                 setStatusBanner('🎤 Mic hearing you — keep going…');
                                 setRealtimeTranscript('');
+                                // Snappy auto-interrupt: even though the server
+                                // cancels the AI response when the candidate
+                                // starts talking, the local <audio> element may
+                                // still play ~200ms of buffered TTS. Mute the
+                                // AI audio immediately so the candidate hears
+                                // their own voice cleanly (just like ChatGPT
+                                // Advanced Voice Mode).
+                                if (realtimeAudioRef.current && !realtimeAudioRef.current.paused) {
+                                    try {
+                                        realtimeAudioRef.current.pause();
+                                    } catch {}
+                                }
+                                setIsPlaying(false);
                                 return;
                             }
                             if (data.speechStopped) {
@@ -1723,7 +1729,7 @@ export function VoiceConversation({ onEndSession }) {
                             </div>
                             <div className="text-sm text-slate-600 mb-4">
                                 {useRealtime && realtimeRef.current ?
-                                    'Speak naturally — the AI will detect your voice and respond. Tap the mute button to pause your mic, or interrupt to cut the AI off.' :
+                                    'Speak naturally — the moment you start talking, the AI will pause and listen. Just like a real conversation.' :
                                     'Just speak naturally - the AI will detect your voice and respond automatically'
                                 }
                             </div>
@@ -1746,29 +1752,18 @@ export function VoiceConversation({ onEndSession }) {
 
                         <div className="flex flex-wrap gap-3 justify-center">
                             {useRealtime && realtimeRef.current && (
-                                <>
-                                    <button
-                                        onClick={toggleMute}
-                                        className={`px-4 py-3 rounded-lg font-semibold flex items-center gap-2 ${
-                                            isMuted
-                                                ? 'bg-amber-500 text-white hover:bg-amber-600'
-                                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                                        }`}
-                                        title={isMuted ? 'Unmute your microphone' : 'Mute your microphone'}
-                                    >
-                                        <span className="text-lg">{isMuted ? '🔈' : '🎙️'}</span>
-                                        <span>{isMuted ? 'Unmute' : 'Mute'}</span>
-                                    </button>
-                                    <button
-                                        onClick={interruptAI}
-                                        disabled={!isPlaying}
-                                        className="px-4 py-3 rounded-lg font-semibold bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-                                        title="Stop the AI mid-sentence so you can speak"
-                                    >
-                                        <span className="text-lg">⏹</span>
-                                        <span>Interrupt</span>
-                                    </button>
-                                </>
+                                <button
+                                    onClick={toggleMute}
+                                    className={`px-4 py-3 rounded-lg font-semibold flex items-center gap-2 ${
+                                        isMuted
+                                            ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                    }`}
+                                    title={isMuted ? 'Unmute your microphone' : 'Mute your microphone (pause)'}
+                                >
+                                    <span className="text-lg">{isMuted ? '🔈' : '🎙️'}</span>
+                                    <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+                                </button>
                             )}
                             <button
                                 onClick={endVoiceSession}

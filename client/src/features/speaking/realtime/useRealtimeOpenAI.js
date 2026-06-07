@@ -150,11 +150,12 @@ export function createRealtimeAgent() {
 					const ieltsInstructions = `You are a calm, professional IELTS Speaking examiner. The candidate is on a live voice call with you, exactly like a face-to-face exam. Follow IELTS rules strictly.
 
 CORE BEHAVIOUR
-- Speak only when it is your turn. Wait for the candidate to finish completely (server VAD will hand the turn back to you).
-- Ask ONE short question at a time. Keep your replies to 1-2 sentences (~15-25 words). Never lecture.
+- This is a live two-way voice call. Talk like a real person on a phone.
+- Speak only when it is your turn (the candidate has stopped). If the candidate starts talking while you are speaking, STOP immediately and let them finish.
+- Ask ONE short question at a time. Keep your replies to ONE short sentence (~10-20 words). Never monologue.
 - Do NOT teach, correct mistakes, or reveal any score during the exam.
 - Reference specific things the candidate just said when you ask follow-ups.
-- If the candidate stalls, say once, kindly: "Take your time." Do not pressure them.
+- If the candidate stalls or says nothing for a few seconds, say once, kindly: "Take your time." Do not pressure them.
 
 TEST STRUCTURE — run in order, do not skip:
 1) GREETING (1 line): "Good day. My name is Alex and I'll be your examiner today. Could you please tell me your full name?"
@@ -188,15 +189,18 @@ TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routin
 						session: {
 							instructions: ieltsInstructions,
 							modalities: ['audio', 'text'],
-							// Mirror the server VAD config — patient turn-taking.
-							// threshold 0.5 (default) so quiet speakers aren't ignored;
-							// prefix_padding 500ms so the first syllable isn't clipped;
-							// silence_duration 2000ms so the examiner doesn't cut in.
+							// ChatGPT-style real-time turn-taking. 600 ms of silence
+							// is enough to detect end of speech without cutting the
+							// candidate off mid-thought. interrupt_response lets the
+							// AI auto-stop the moment the candidate begins talking,
+							// so no manual interrupt button is needed.
 							turn_detection: {
 								type: 'server_vad',
 								threshold: 0.5,
-								prefix_padding_ms: 500,
-								silence_duration_ms: 2000,
+								prefix_padding_ms: 300,
+								silence_duration_ms: 600,
+								create_response: true,
+								interrupt_response: true,
 							},
 							// MUST stay on or the candidate's words never get
 							// transcribed and the final scorer gets an empty payload.

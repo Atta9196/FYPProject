@@ -2114,18 +2114,24 @@ Remember: You're having a REAL conversation. Be patient, encouraging, and suppor
         input_audio_transcription: { model: "whisper-1" },
         // Keep examiner replies short and natural (~1-2 sentences).
         max_response_output_tokens: 120,
-        // Server-side VAD: a real examiner waits ~2s of silence before
-        // taking a turn so the candidate can finish their thought.
-        //   - threshold 0.5  → OpenAI default; lower than this misses quiet
-        //                      speakers and we end up with "0 spoken words".
-        //   - prefix_padding 500ms → capture the first syllable of the first
-        //                            word, otherwise quick starts get clipped.
-        //   - silence_duration 2000ms → patient turn-taking.
+        // Server-side VAD tuned for a ChatGPT-style natural conversation:
+        //   - threshold 0.5     → OpenAI default; catches quiet speakers.
+        //   - prefix_padding 300ms → captures the start of the first word.
+        //   - silence_duration 600ms → fast turn-taking, like a real chat.
+        //   - create_response: true → after the candidate finishes, the AI
+        //                              automatically generates the next turn.
+        //   - interrupt_response: true → the MOMENT the candidate starts
+        //                                speaking, the AI's in-flight reply
+        //                                is cancelled (true barge-in) so the
+        //                                candidate never has to wait or use
+        //                                a manual "Interrupt" button.
         turn_detection: {
           type: 'server_vad',
           threshold: 0.5,
-          prefix_padding_ms: 500,
-          silence_duration_ms: 2000
+          prefix_padding_ms: 300,
+          silence_duration_ms: 600,
+          create_response: true,
+          interrupt_response: true
         }
       })
     });
