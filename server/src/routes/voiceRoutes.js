@@ -69,7 +69,7 @@ router.post("/session", async (req, res) => {
     // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
     // Using latest model for better real-time voice responses
     const payload = {
-      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for better performance
+      model: "GPT-4o Realtime", // Latest model for better performance
       voice: "verse", // "verse" for natural voice, or "alloy", "ash", "ballad", "coral", "echo", "sage"
       modalities: ["text", "audio"], // Enable both text and audio for real-time voice
         instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
@@ -208,7 +208,7 @@ FINAL REMINDER:
     // Ensure client_secret is included in response and add model
     const responseData = {
       ...session,
-      model: session.model || "gpt-4o-realtime-preview-2024-12-17", // Include model in response
+      model: session.model || "GPT-4o Realtime", // Include model in response
       success: true,
       message: "Session created successfully"
     };
