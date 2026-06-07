@@ -222,111 +222,124 @@ Randomization: choose topics from everyday life, technology, culture, education,
       };
       dataChannel.onmessage = (event) => {
         try {
-          // Parse JSON event from OpenAI Realtime API
+          // Parse JSON event from OpenAI Realtime API.
           const eventData = JSON.parse(event.data);
-          console.log('📨 Realtime event from AI:', eventData);
-          
-          // Handle various transcription event types
-          // OpenAI Realtime API sends different event types for transcription
-          let transcript = null;
-          let isPartial = false;
-          let isComplete = false;
-          
-          // Check for transcript in various possible locations
-          if (eventData.transcript) {
-            transcript = eventData.transcript;
-          } else if (eventData.delta && eventData.delta.transcript) {
-            transcript = eventData.delta.transcript;
-          } else if (eventData.item && eventData.item.input_audio_transcript) {
-            transcript = eventData.item.input_audio_transcript;
-          } else if (eventData.input_audio_transcript) {
-            transcript = eventData.input_audio_transcript;
+          const t = eventData.type || '';
+
+          // Only log a small subset to keep the console readable
+          if (!t.includes('audio') || t.endsWith('.done') || t.endsWith('.completed')) {
+            console.log('📨 Realtime event:', t);
           }
-          
-          // Determine if this is a partial or complete transcription
-          if (eventData.type === 'input_audio_buffer_committed') {
-            isComplete = true;
-            isPartial = false;
-          } else if (eventData.type === 'input_audio_buffer_speech_started' || 
-                     eventData.type === 'input_audio_buffer_speech_stopped') {
-            isPartial = true;
-            isComplete = false;
-          } else if (eventData.type === 'conversation_item_input_audio_transcription_completed' ||
-                     eventData.type === 'conversation_item_input_audio_transcription_failed') {
-            isComplete = true;
-            isPartial = false;
-				} else if (eventData.type === 'response.audio_transcript.delta' ||
-							eventData.type === 'response.audio_transcript.done') {
-            // These are for AI responses, not user input
+
+          // ── AI SPEECH ── OpenAI streams what the AI is speaking as audio transcript
+          //    deltas. We forward both deltas (so the UI can show the AI's words
+          //    live, like Whisper subtitles) and the final transcript when done.
+          if (t === 'response.audio_transcript.delta' && onAgentMessage) {
+            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+            if (textDelta) onAgentMessage({ type: 'delta', text: textDelta });
             return;
           }
-          
-          // If we found a transcript, call the callback
-          if (transcript && onTranscriptionUpdate) {
-            console.log('📝 Real-time transcription:', transcript, { isPartial, isComplete });
-            onTranscriptionUpdate({
-              transcript: transcript,
-              isPartial: isPartial,
-              isComplete: isComplete,
-              eventType: eventData.type
-            });
+          if (t === 'response.audio_transcript.done' && onAgentMessage) {
+            const finalText = typeof eventData.transcript === 'string' ? eventData.transcript : '';
+            onAgentMessage({ type: 'done', text: finalText });
+            return;
           }
 
-				// Stream AI text responses to UI (for showing current question and tracking parts)
-				try {
-					// Delta updates for AI response
-					if (onAgentMessage && (eventData.type === 'response.delta' || eventData.type === 'response.output_text.delta')) {
-						let textDelta = '';
-						// Try common shapes
-						if (eventData.delta && typeof eventData.delta === 'string') {
-							textDelta = eventData.delta;
-						} else if (eventData.delta && eventData.delta.content) {
-							// If content is an array of text chunks
-							const parts = Array.isArray(eventData.delta.content) ? eventData.delta.content : [eventData.delta.content];
-							textDelta = parts.map(p => (p && p.text) ? p.text : '').join('');
-						} else if (eventData.output_text_delta) {
-							textDelta = eventData.output_text_delta;
-						}
-						if (textDelta) {
-							onAgentMessage({ type: 'delta', text: textDelta });
-						}
-					}
+          // ── AI TEXT-ONLY responses (when modality includes text without audio)
+          if (t === 'response.text.delta' && onAgentMessage) {
+            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+            if (textDelta) onAgentMessage({ type: 'delta', text: textDelta });
+            return;
+          }
+          if (t === 'response.text.done' && onAgentMessage) {
+            const finalText = typeof eventData.text === 'string' ? eventData.text : '';
+            onAgentMessage({ type: 'done', text: finalText });
+            return;
+          }
 
-					// Completed AI response
-					if (onAgentMessage && (eventData.type === 'response.completed' || eventData.type === 'response.done' || eventData.type === 'response.output_text.done')) {
-						let finalText = '';
-						if (eventData.response && typeof eventData.response.output_text === 'string') {
-							finalText = eventData.response.output_text;
-						} else if (typeof eventData.output_text === 'string') {
-							finalText = eventData.output_text;
-						}
-						onAgentMessage({ type: 'done', text: finalText });
-					}
-				} catch (msgErr) {
-					console.warn('⚠️ Failed to surface AI message to UI:', msgErr);
-				}
+          // ── End-of-turn safety net: when the AI completes a full response,
+          //    flush whatever transcript we have so the UI commits the message
+          //    to the conversation history even if the .done event was missed.
+          if ((t === 'response.completed' || t === 'response.done') && onAgentMessage) {
+            onAgentMessage({ type: 'done', text: '' });
+            return;
+          }
 
-				// Structured events that the model may send
-				try {
-					if (eventData.type === 'part.change' && onAgentMessage) {
-						onAgentMessage({ type: 'part', text: null, meta: { part: eventData.part } });
-					}
-					if (eventData.type === 'question.asked' && onAgentMessage) {
-						onAgentMessage({ type: 'question', text: eventData.text, meta: { part: eventData.part } });
-					}
-					if (eventData.type === 'feedback.inline' && onFeedback) {
-						onFeedback(eventData.feedback);
-						onAgentMessage && onAgentMessage({ type: 'feedback', text: null, meta: eventData.feedback });
-					}
-					if (eventData.type === 'cuecard.card' && onAgentMessage) {
-						onAgentMessage({ type: 'question', text: eventData.topic, meta: { part: 2, bullets: eventData.bullets } });
-					}
-				} catch (e) {
-					console.warn('⚠️ Failed to surface structured event:', e);
-				}
-			} catch (parseError) {
-          // If not JSON, log as plain text
-          console.log('📨 Realtime message from AI (text):', event.data);
+          // ── USER SPEECH ── Server VAD lifecycle + final transcription
+          if (t === 'input_audio_buffer.speech_started' && onTranscriptionUpdate) {
+            onTranscriptionUpdate({
+              transcript: '',
+              isPartial: true,
+              isComplete: false,
+              eventType: t,
+              speechStarted: true,
+            });
+            return;
+          }
+          if (t === 'input_audio_buffer.speech_stopped' && onTranscriptionUpdate) {
+            onTranscriptionUpdate({
+              transcript: '',
+              isPartial: true,
+              isComplete: false,
+              eventType: t,
+              speechStopped: true,
+            });
+            return;
+          }
+          if (t === 'conversation.item.input_audio_transcription.delta' && onTranscriptionUpdate) {
+            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+            if (textDelta) {
+              onTranscriptionUpdate({
+                transcript: textDelta,
+                isPartial: true,
+                isComplete: false,
+                eventType: t,
+                isDelta: true,
+              });
+            }
+            return;
+          }
+          if (t === 'conversation.item.input_audio_transcription.completed' && onTranscriptionUpdate) {
+            const transcript = typeof eventData.transcript === 'string' ? eventData.transcript : '';
+            onTranscriptionUpdate({
+              transcript,
+              isPartial: false,
+              isComplete: true,
+              eventType: t,
+            });
+            return;
+          }
+          if (t === 'conversation.item.input_audio_transcription.failed') {
+            console.warn('⚠️ Whisper failed to transcribe user audio:', eventData);
+            return;
+          }
+
+          // ── Custom structured events the model may emit (kept for backwards compat)
+          if (t === 'part.change' && onAgentMessage) {
+            onAgentMessage({ type: 'part', text: null, meta: { part: eventData.part } });
+            return;
+          }
+          if (t === 'question.asked' && onAgentMessage) {
+            onAgentMessage({ type: 'question', text: eventData.text, meta: { part: eventData.part } });
+            return;
+          }
+          if (t === 'feedback.inline' && onFeedback) {
+            onFeedback(eventData.feedback);
+            if (onAgentMessage) onAgentMessage({ type: 'feedback', text: null, meta: eventData.feedback });
+            return;
+          }
+          if (t === 'cuecard.card' && onAgentMessage) {
+            onAgentMessage({ type: 'question', text: eventData.topic, meta: { part: 2, bullets: eventData.bullets } });
+            return;
+          }
+
+          // ── Server-side errors from the Realtime API
+          if (t === 'error') {
+            console.error('❌ Realtime API error event:', eventData?.error || eventData);
+            return;
+          }
+        } catch (parseError) {
+          console.log('📨 Realtime message (non-JSON):', event.data);
         }
       };
       dataChannel.onerror = (error) => {
@@ -641,7 +654,52 @@ Randomization: choose topics from everyday life, technology, culture, education,
 		dataChannel.send(JSON.stringify(cueReq));
 	};
 
-	return { start, stop, isSupported, requestCueCard };
+	// Mute/unmute the local microphone track so the user can stop transmitting
+	// audio (e.g. while thinking). Server-side VAD will treat this as silence.
+	const setMuted = (muted) => {
+		if (!micStream) return;
+		micStream.getAudioTracks().forEach((track) => {
+			track.enabled = !muted;
+		});
+	};
+
+	// Interrupt the AI mid-response (e.g. if it's rambling). Tells the server
+	// to cancel the in-flight response so the user can speak again right away.
+	const interrupt = () => {
+		try {
+			if (dataChannel && dataChannel.readyState === 'open') {
+				dataChannel.send(JSON.stringify({ type: 'response.cancel' }));
+			}
+			// Also stop any currently playing remote audio immediately
+			if (remoteAudioEl) {
+				try {
+					remoteAudioEl.pause();
+					remoteAudioEl.currentTime = 0;
+				} catch {}
+			}
+		} catch (e) {
+			console.warn('⚠️ Failed to interrupt realtime response:', e);
+		}
+	};
+
+	// Expose the local mic stream so the UI can attach a WebAudio analyser
+	// to it (volume meter, voice-activity indicator, etc).
+	const getMicStream = () => micStream;
+
+	// Expose the remote audio element so the UI can read .paused / .ended
+	// for reliable "AI speaking" status.
+	const getRemoteAudioEl = () => remoteAudioEl;
+
+	return {
+		start,
+		stop,
+		isSupported,
+		requestCueCard,
+		setMuted,
+		interrupt,
+		getMicStream,
+		getRemoteAudioEl,
+	};
 }
 
 

@@ -17,6 +17,8 @@ export function VoiceConversation({ onEndSession }) {
     const [voiceActivity, setVoiceActivity] = useState(false);
 		const [volumeLevel, setVolumeLevel] = useState(0); // 0-100 live level for pronunciation/voice bar
 		const [ieltsPart, setIeltsPart] = useState('Part 1');
+		const [isMuted, setIsMuted] = useState(false); // mic mute toggle (realtime mode)
+		const [statusBanner, setStatusBanner] = useState(''); // ephemeral status line
 		const examinerTurnsRef = useRef(0);
 		const streamingAgentTextRef = useRef('');
     
@@ -86,6 +88,58 @@ export function VoiceConversation({ onEndSession }) {
             }
         };
     }, [useRealtime]);
+
+    // Hard cleanup when the component unmounts: stop the realtime WebRTC
+    // session, the volume-meter loop, and any open AudioContext so leaving
+    // the page mid-call doesn't leave the mic / connection alive.
+    useEffect(() => {
+        return () => {
+            try {
+                if (realtimeRef.current && typeof realtimeRef.current.stop === 'function') {
+                    realtimeRef.current.stop().catch(() => {});
+                }
+            } catch {}
+            if (voiceDetectionRef.current) {
+                cancelAnimationFrame(voiceDetectionRef.current);
+                voiceDetectionRef.current = null;
+            }
+            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                try { audioContextRef.current.close(); } catch {}
+                audioContextRef.current = null;
+            }
+            if (processingTimeoutRef.current) {
+                clearTimeout(processingTimeoutRef.current);
+                processingTimeoutRef.current = null;
+            }
+            try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch {}
+        };
+    }, []);
+
+    // Mute / unmute the local microphone (Realtime mode)
+    const toggleMute = () => {
+        try {
+            const next = !isMuted;
+            setIsMuted(next);
+            if (realtimeRef.current && typeof realtimeRef.current.setMuted === 'function') {
+                realtimeRef.current.setMuted(next);
+            }
+        } catch (err) {
+            console.warn('toggleMute failed:', err);
+        }
+    };
+
+    // Interrupt AI mid-response (Realtime mode)
+    const interruptAI = () => {
+        try {
+            if (realtimeRef.current && typeof realtimeRef.current.interrupt === 'function') {
+                realtimeRef.current.interrupt();
+                setIsPlaying(false);
+                setStatusBanner('⏹ Stopped AI — your turn.');
+            }
+        } catch (err) {
+            console.warn('interruptAI failed:', err);
+        }
+    };
 
     const handleVoiceResponse = (data) => {
         if (data.type === 'session-started') {
@@ -382,31 +436,24 @@ export function VoiceConversation({ onEndSession }) {
                     if (!realtimeRef.current) realtimeRef.current = createRealtimeAgent();
                     if (!realtimeAudioRef.current) realtimeAudioRef.current = new Audio();
                     
-                // Set up audio element event handlers for real-time voice
+                // Set up audio element event handlers for real-time voice.
+                // IMPORTANT: do NOT overwrite `currentMessage` here — the streaming
+                // AI transcript flows into that state via the `onAgentMessage`
+                // delta/done events. Just keep the `isPlaying` flag in sync so
+                // the UI shows the "Speaking…" badge without losing the words.
                 if (realtimeAudioRef.current) {
                     realtimeAudioRef.current.onplay = () => {
                         setIsPlaying(true);
-                        console.log('🔊 AI is speaking in real-time...');
-                        setCurrentMessage('🔊 AI is speaking...');
                     };
-                    
+                    realtimeAudioRef.current.onpause = () => {
+                        setIsPlaying(false);
+                    };
                     realtimeAudioRef.current.onended = () => {
                         setIsPlaying(false);
-                        console.log('🔊 AI finished speaking');
-                        setCurrentMessage('✅ AI finished speaking. You can respond now.');
                     };
-                    
                     realtimeAudioRef.current.onerror = (e) => {
                         console.error('❌ Audio playback error:', e);
                         setIsPlaying(false);
-                    };
-                    
-                    realtimeAudioRef.current.onloadedmetadata = () => {
-                        console.log('🎵 AI audio metadata loaded');
-                    };
-                    
-                    realtimeAudioRef.current.oncanplay = () => {
-                        console.log('🎵 AI audio can play');
                     };
                 }
                     
@@ -415,35 +462,55 @@ export function VoiceConversation({ onEndSession }) {
                         onConnected: () => {
                             setIsConnected(true);
                             setIsStreamingMode(true);
-                            // Do NOT start listening yet; first play greeting + first question
-                            setIsListening(false);
                             setIsRecording(false);
-
-                            // Let Realtime model handle greeting/responding; do not speak locally to avoid double audio
                             setIsListening(true);
+                            // Tap into the realtime mic stream to drive the volume meter
+                            try {
+                                const stream = realtimeRef.current?.getMicStream?.();
+                                if (stream) setupVoiceActivityDetection(stream);
+                            } catch (meterErr) {
+                                console.warn('⚠️ Voice meter setup failed:', meterErr);
+                            }
                             console.log('✅ Realtime API connected. Listening enabled; AI will speak via realtime audio.');
                         },
 						onAgentMessage: ({ type, text, meta }) => {
 							try {
 								if (type === 'delta' && text) {
-									// Accumulate streaming text from AI
-                                    streamingAgentTextRef.current = (streamingAgentTextRef.current || '') + text;
-									setCurrentMessage(prev => {
-										const combined = (prev || '') + text;
-										return combined;
-									});
+									// First delta means the AI started speaking. Drive the
+									// "AI is speaking" indicator from these events rather
+									// than the <audio> element, because a live MediaStream
+									// never fires `onended`.
+									setIsPlaying(true);
+									setStatusBanner('');
+									// Each delta is the next slice of the AI's spoken sentence.
+									// Accumulate in a ref AND mirror to currentMessage so the UI
+									// shows the AI's words live (subtitle-style) while it speaks.
+									streamingAgentTextRef.current = (streamingAgentTextRef.current || '') + text;
+									setCurrentMessage(streamingAgentTextRef.current);
 								} else if (type === 'done') {
-									const final = (text && text.trim().length > 0) ? text.trim() : (streamingAgentTextRef.current || '').trim();
+									setIsPlaying(false);
+									// Commit whatever we have to the chat history. Some event
+									// shapes ship the full transcript here; if not, fall back
+									// to the accumulator we've been building from deltas.
+									const final = (text && text.trim().length > 0)
+										? text.trim()
+										: (streamingAgentTextRef.current || '').trim();
 									if (final) {
-										setConversationHistory(prev => ([
-											...prev,
-											{ role: 'examiner', content: final, timestamp: new Date(), isAudio: true }
-										]));
+										setConversationHistory(prev => {
+											// Avoid duplicating the most recent examiner message
+											// (some flows emit both .done and response.completed).
+											const last = prev[prev.length - 1];
+											if (last && last.role === 'examiner' && last.content === final) {
+												return prev;
+											}
+											return [
+												...prev,
+												{ role: 'examiner', content: final, timestamp: new Date(), isAudio: true }
+											];
+										});
 										setCurrentMessage(final);
-										// Heuristic fallback still available if model does not emit part.change
 										examinerTurnsRef.current += 1;
 									}
-									// Reset accumulator
 									streamingAgentTextRef.current = '';
 								} else if (type === 'part') {
 									if (meta && meta.part) {
@@ -475,23 +542,38 @@ export function VoiceConversation({ onEndSession }) {
                             throw e; // Re-throw to be caught by outer catch
                         },
                         onTranscriptionUpdate: (data) => {
-                            // Handle real-time transcription updates
-                            console.log('📝 Real-time transcription update:', data);
-                            if (data.transcript) {
-                                // Always update real-time transcript as user speaks
-                                setRealtimeTranscript(data.transcript);
-                                
-                                // If transcription is complete, also save to userTranscript
-                                if (data.isComplete) {
-                                    setUserTranscript(data.transcript);
-                                    // Keep realtime transcript visible for a moment, then clear
-                                    setTimeout(() => {
-                                        setRealtimeTranscript('');
-                                    }, 2000);
-                                }
-                            } else if (data.isComplete) {
-                                // If complete but no transcript, clear realtime
+                            // Handle real-time transcription updates from server VAD
+                            if (data.speechStarted) {
+                                setStatusBanner('🎤 Listening…');
                                 setRealtimeTranscript('');
+                                return;
+                            }
+                            if (data.speechStopped) {
+                                setStatusBanner('⏳ Transcribing…');
+                                return;
+                            }
+                            if (data.isDelta && data.transcript) {
+                                // Append delta to whatever we already have
+                                setRealtimeTranscript((prev) => (prev || '') + data.transcript);
+                                return;
+                            }
+                            if (data.isComplete && data.transcript) {
+                                setUserTranscript(data.transcript);
+                                setRealtimeTranscript('');
+                                setStatusBanner('');
+                                setConversationHistory((prev) => ([
+                                    ...prev,
+                                    {
+                                        role: 'user',
+                                        content: data.transcript,
+                                        timestamp: new Date(),
+                                    },
+                                ]));
+                                return;
+                            }
+                            if (data.isComplete && !data.transcript) {
+                                setRealtimeTranscript('');
+                                setStatusBanner('');
                             }
                         },
                         maxDurationMs: 10 * 60 * 1000 // 10 minutes
@@ -760,7 +842,15 @@ export function VoiceConversation({ onEndSession }) {
 			// Map peak to 0-100 for a smooth pronunciation/voice level bar
 			const normalized = Math.min(100, Math.max(0, Math.round((peak / 255) * 100)));
 			setVolumeLevel(normalized);
-            
+
+            // In Realtime API mode the OpenAI server handles VAD and we don't
+            // need a local MediaRecorder at all — bail out before the Socket.IO
+            // streaming-record logic.
+            if (useRealtime && sessionId === 'realtime') {
+                voiceDetectionRef.current = requestAnimationFrame(checkVoiceActivity);
+                return;
+            }
+
             // Always automatically start recording when voice is detected (streaming mode only)
             if (sessionId) {
                 if (isVoiceActive && !isRecording && !isPlaying) {
@@ -1108,36 +1198,63 @@ export function VoiceConversation({ onEndSession }) {
     const endVoiceSession = () => {
         if (useRealtime && realtimeRef.current) {
             realtimeRef.current.stop().catch(() => {});
+            realtimeRef.current = null;
+        }
+        if (realtimeAudioRef.current) {
+            try {
+                realtimeAudioRef.current.pause();
+                realtimeAudioRef.current.srcObject = null;
+            } catch {}
+            realtimeAudioRef.current = null;
         }
         // Stop voice activity detection
         if (voiceDetectionRef.current) {
             cancelAnimationFrame(voiceDetectionRef.current);
+            voiceDetectionRef.current = null;
         }
-        
+
         // Stop streaming interval
         if (streamingIntervalRef.current) {
             clearInterval(streamingIntervalRef.current);
+            streamingIntervalRef.current = null;
         }
-        
-        // Close audio context
-        if (audioContextRef.current) {
-            audioContextRef.current.close();
+
+        // Close audio context (only if still open)
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+            try { audioContextRef.current.close(); } catch {}
+            audioContextRef.current = null;
         }
-        
+
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
         }
-        
+
+        if (processingTimeoutRef.current) {
+            clearTimeout(processingTimeoutRef.current);
+            processingTimeoutRef.current = null;
+        }
+
+        // Stop any TTS that's mid-utterance (Socket.IO fallback path)
+        try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch {}
+
         // Only notify server if not in Realtime mode
         if (socketRef.current && sessionId !== 'realtime') {
             socketRef.current.emit('voice-conversation', { type: 'end', sessionId });
         }
-        
+
         setIsRecording(false);
         setIsListening(false);
         setIsProcessing(false);
-        // Always keep streaming mode enabled
+        setIsPlaying(false);
         setVoiceActivity(false);
+        setIsMuted(false);
+        setVolumeLevel(0);
+        setStatusBanner('');
+        setSessionId(null);
+        setRealtimeTranscript('');
+        // Don't wipe userTranscript / currentMessage / conversationHistory so
+        // the user can still see the last reply after the session ends.
 
         // Notify parent so it can trigger AI evaluation and save band score
         if (typeof onEndSession === 'function') {
@@ -1365,29 +1482,62 @@ export function VoiceConversation({ onEndSession }) {
                                 {useRealtime && realtimeRef.current ? '📞 Real-Time Voice Call Active' : '🎙️ Live Streaming Mode Active'}
                             </div>
                             <div className="text-sm text-slate-600 mb-4">
-                                {useRealtime && realtimeRef.current ? 
-                                    'This works like a phone call - speak naturally and the AI will automatically detect your voice and respond. You can interrupt the AI anytime by speaking.' :
+                                {useRealtime && realtimeRef.current ?
+                                    'Speak naturally — the AI will detect your voice and respond. Tap the mute button to pause your mic, or interrupt to cut the AI off.' :
                                     'Just speak naturally - the AI will detect your voice and respond automatically'
                                 }
                             </div>
-                            <div className={`px-4 py-2 rounded-lg ${voiceActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            <div className={`px-4 py-2 rounded-lg ${
+                                isMuted ? 'bg-amber-100 text-amber-700'
+                                : voiceActivity ? 'bg-green-100 text-green-700'
+                                : 'bg-gray-100 text-gray-600'
+                            }`}>
                                 {useRealtime && realtimeRef.current ? (
-                                    isPlaying ? '🔊 AI is speaking...' : 
-                                    voiceActivity ? '🎤 You are speaking...' : 
-                                    '👂 Listening... (Speak naturally - AI will respond automatically)'
+                                    isMuted ? '🔕 Microphone muted — tap Unmute to continue' :
+                                    statusBanner ? statusBanner :
+                                    isPlaying ? '🔊 AI is speaking…' :
+                                    voiceActivity ? '🎤 You are speaking…' :
+                                    '👂 Listening… speak naturally, the AI will reply.'
                                 ) : (
                                     voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'
                                 )}
                             </div>
                         </div>
-                        
-                        <button
-                            onClick={endVoiceSession}
-                            className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 flex items-center space-x-2"
-                        >
-                            <span className="text-xl">🏁</span>
-                            <span>End Session</span>
-                        </button>
+
+                        <div className="flex flex-wrap gap-3 justify-center">
+                            {useRealtime && realtimeRef.current && (
+                                <>
+                                    <button
+                                        onClick={toggleMute}
+                                        className={`px-4 py-3 rounded-lg font-semibold flex items-center gap-2 ${
+                                            isMuted
+                                                ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                        }`}
+                                        title={isMuted ? 'Unmute your microphone' : 'Mute your microphone'}
+                                    >
+                                        <span className="text-lg">{isMuted ? '🔈' : '🎙️'}</span>
+                                        <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+                                    </button>
+                                    <button
+                                        onClick={interruptAI}
+                                        disabled={!isPlaying}
+                                        className="px-4 py-3 rounded-lg font-semibold bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                                        title="Stop the AI mid-sentence so you can speak"
+                                    >
+                                        <span className="text-lg">⏹</span>
+                                        <span>Interrupt</span>
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                onClick={endVoiceSession}
+                                className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 flex items-center space-x-2"
+                            >
+                                <span className="text-xl">🏁</span>
+                                <span>End Session</span>
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
