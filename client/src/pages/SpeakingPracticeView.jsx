@@ -68,6 +68,10 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const conversationEndRef = useRef(null);
+    // Track recording duration so the server can enforce the
+    // < 20s → max band 3 anti-cheating rule on the speaking evaluator.
+    const recordingStartedAtRef = useRef(null);
+    const recordingDurationRef = useRef(null);
 
     // When embedded (e.g. Full Test Simulator), signal ready so the parent can start the timer
     useEffect(() => {
@@ -152,12 +156,23 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
             };
             
             recorder.onstop = () => {
+                // Capture duration the moment the recorder stops; this is
+                // sent with the audio so the server can apply the official
+                // IELTS short-speech caps (< 20s → max band 3, etc.).
+                if (recordingStartedAtRef.current) {
+                    recordingDurationRef.current = Math.max(
+                        0,
+                        (Date.now() - recordingStartedAtRef.current) / 1000
+                    );
+                }
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                 sendAudioForEvaluation(audioBlob);
                 stream.getTracks().forEach(track => track.stop());
             };
             
             mediaRecorderRef.current = recorder;
+            recordingStartedAtRef.current = Date.now();
+            recordingDurationRef.current = null;
             recorder.start();
             setIsRecording(true);
             setTimeLeft(120);
@@ -186,7 +201,11 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
             formData.append('audio', audioBlob, 'recording.webm');
             formData.append('question', currentQuestion);
             formData.append('userId', 'current-user'); // Replace with actual user ID
-            
+            if (recordingDurationRef.current != null) {
+                // Server uses this to enforce the < 20s → max band 3 rule.
+                formData.append('audioDurationSec', String(recordingDurationRef.current));
+            }
+
             const response = await fetch('https://ielts-coach-backend.onrender.com/api/speaking/evaluate', {
                 method: 'POST',
                 body: formData

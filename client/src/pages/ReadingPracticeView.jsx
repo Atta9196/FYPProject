@@ -522,7 +522,7 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
     }, [user]);
 
     const handleSubmit = useCallback(
-        (auto = false) => {
+        async (auto = false) => {
             if (submitted || submitting) return;
             setSubmitting(true);
             setErrorMessage(null);
@@ -531,11 +531,55 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
                 if (!activeSet) {
                     throw new Error("No reading set selected.");
                 }
-                const evaluation = evaluateReadingSet(activeSet, answers);
+
+                // Always compute the local evaluation first so we have an
+                // instant offline baseline and a guaranteed fallback if the
+                // server-side AI-assisted scoring is unreachable.
+                const localEvaluation = evaluateReadingSet(activeSet, answers);
+                let finalEvaluation = localEvaluation;
+
+                // Prefer server-side scoring: it uses the same answer-based
+                // logic PLUS an AI semantic-match pass on fill answers
+                // (e.g. "public transport" ≈ "public transportation") plus a
+                // strengths / weaknesses / suggestions explanation block.
+                try {
+                    const apiBase =
+                        import.meta.env?.VITE_API_BASE_URL ||
+                        "https://ielts-coach-backend.onrender.com";
+                    const response = await fetch(`${apiBase}/api/reading/score`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ readingSet: activeSet, answers }),
+                    });
+                    if (response.ok) {
+                        const serverResult = await response.json();
+                        if (serverResult?.success) {
+                            // Merge server output into the shape the rest of
+                            // the page already renders (questionFeedback,
+                            // correctCount, band, etc.) without changing UI.
+                            finalEvaluation = {
+                                ...localEvaluation,
+                                correctCount: serverResult.correctCount ?? localEvaluation.correctCount,
+                                partialCount: serverResult.partialCount ?? 0,
+                                wrongCount: serverResult.wrongCount ?? localEvaluation.totalQuestions - serverResult.correctCount,
+                                totalQuestions: serverResult.totalQuestions ?? localEvaluation.totalQuestions,
+                                scaledScore: serverResult.rawScore ?? localEvaluation.scaledScore,
+                                accuracyPercent: serverResult.accuracyPercent,
+                                band: String(serverResult.band ?? localEvaluation.band),
+                                questionFeedback: serverResult.questionFeedback || localEvaluation.questionFeedback,
+                                summary: serverResult.summary || null,
+                                source: "server",
+                            };
+                        }
+                    }
+                } catch (serverError) {
+                    console.warn("Server-side reading scoring unavailable, using local fallback:", serverError.message);
+                }
+
                 setResults({
-                    ...evaluation,
+                    ...finalEvaluation,
                     autoSubmitted: auto,
-                    mode
+                    mode,
                 });
                 setSubmitted(true);
                 setTimerStatus("completed");
@@ -545,13 +589,16 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
                     setId: activeSet.id,
                     title: activeSet.title,
                     mode,
-                    correctCount: evaluation.correctCount,
-                    totalQuestions: evaluation.totalQuestions,
-                    scaledScore: evaluation.scaledScore,
-                    band: evaluation.band,
+                    correctCount: finalEvaluation.correctCount,
+                    totalQuestions: finalEvaluation.totalQuestions,
+                    scaledScore: finalEvaluation.scaledScore,
+                    band: finalEvaluation.band,
+                    bandScore: typeof finalEvaluation.band === "string"
+                        ? parseFloat(finalEvaluation.band) || 0
+                        : finalEvaluation.band,
                     submittedAt: new Date().toISOString(),
                     autoSubmitted: auto,
-                    timeRemaining
+                    timeRemaining,
                 });
             } catch (error) {
                 console.error("Failed to evaluate reading set", error);

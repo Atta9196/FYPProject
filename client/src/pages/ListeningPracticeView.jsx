@@ -554,8 +554,10 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
         setSubmitting(true);
 
         try {
-            // 1. Per-section scoring (unchanged logic)
-            const sectionResults = listeningSections.map((section) => {
+            // 1. Local fallback scoring (per-section, exact-match only). Used
+            // when the server-side AI-assisted scoring is unreachable so the
+            // user is never left without a result.
+            const localSectionResults = listeningSections.map((section) => {
                 const { correctCount, feedback } = evaluateSection(section, allAnswers);
                 return {
                     sectionId: section.id,
@@ -566,24 +568,36 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                 };
             });
 
-            const totalScore = sectionResults.reduce((sum, r) => sum + r.score, 0);
+            const localTotalScore = localSectionResults.reduce((sum, r) => sum + r.score, 0);
             const totalQuestionsCount = listeningSections.reduce(
                 (sum, s) => sum + (s.questions?.length || 0),
                 0
             );
 
-            // 2. Call existing AI evaluate endpoint (unchanged)
+            // 2. Preferred path: server-side answer-based scoring with AI
+            // semantic matching for fill answers ("city centre" = "city
+            // center", etc.) plus a strengths/weaknesses explanation block.
+            let sectionResults = localSectionResults;
             let aiBand = null;
             let aiFeedback = null;
+            let aiSummary = null;
+            let serverCorrectCount = null;
+            let serverPartialCount = 0;
+            let serverWrongCount = null;
             try {
                 const res = await fetch(`${apiBase}/api/listening/evaluate`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        totalScore,
+                        // NEW shape: server scores everything itself
+                        sections: listeningSections,
+                        answers: allAnswers,
+                        // ALSO send legacy totals so older deployments still respond
+                        totalScore: localTotalScore,
                         totalQuestions: totalQuestionsCount,
-                        sectionScores: sectionResults.map((r) => ({
+                        sectionScores: localSectionResults.map((r) => ({
                             sectionId: r.sectionId,
+                            sectionTitle: r.sectionTitle,
                             score: r.score,
                             total: r.totalQuestions,
                         })),
@@ -593,11 +607,29 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
                 if (data?.success) {
                     if (typeof data.bandScore === "number") aiBand = data.bandScore;
                     if (data.feedback) aiFeedback = data.feedback;
+                    if (data.summary) aiSummary = data.summary;
+                    if (Array.isArray(data.sectionResults) && data.sectionResults.length) {
+                        sectionResults = data.sectionResults.map((sr) => ({
+                            ...sr,
+                            sectionTitle:
+                                sr.sectionTitle ||
+                                listeningSections.find((s) => s.id === sr.sectionId)?.title ||
+                                `Section ${sr.sectionId}`,
+                            feedback:
+                                localSectionResults.find((r) => r.sectionId === sr.sectionId)
+                                    ?.feedback || {},
+                        }));
+                    }
+                    if (typeof data.correctCount === "number") serverCorrectCount = data.correctCount;
+                    if (typeof data.partialCount === "number") serverPartialCount = data.partialCount;
+                    if (typeof data.wrongCount === "number") serverWrongCount = data.wrongCount;
                 }
             } catch {
                 // Network failure → fall back to local band table only
             }
 
+            const totalScore =
+                serverCorrectCount !== null ? serverCorrectCount : localTotalScore;
             const finalBand =
                 aiBand != null
                     ? aiBand
@@ -606,11 +638,17 @@ export function ListeningPracticeView({ embedded = false, onReady }) {
             const finalResults = {
                 sections: sectionResults,
                 totalScore,
+                partialCount: serverPartialCount,
+                wrongCount:
+                    serverWrongCount !== null
+                        ? serverWrongCount
+                        : Math.max(0, totalQuestionsCount - totalScore),
                 totalQuestions: totalQuestionsCount,
                 band: finalBand,
                 autoSubmitted: auto,
                 feedback:
                     aiFeedback || `Score: ${totalScore}/${totalQuestionsCount}`,
+                summary: aiSummary,
                 completedAt: new Date().toISOString(),
             };
 

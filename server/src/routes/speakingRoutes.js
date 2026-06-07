@@ -6,7 +6,22 @@ const fs = require("fs");
 const path = require("path");
 const admin = require("firebase-admin");
 
+const {
+  validateSpeakingSubmission,
+  averageBand,
+  clampBand,
+  countWords,
+  summariseStrengthsWeaknesses,
+} = require("../services/scoringService");
+
 const router = express.Router();
+
+const SPEAKING_CRITERIA_LABELS = {
+  fluency: "Fluency & Coherence",
+  lexical: "Lexical Resource",
+  grammar: "Grammatical Range & Accuracy",
+  pronunciation: "Pronunciation",
+};
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -232,113 +247,257 @@ Requirements:
 
 /**
  * POST /api/speaking/evaluate
- * Evaluate speaking performance using OpenAI Whisper + GPT
+ *
+ * Hybrid IELTS Speaking scoring:
+ *  1. Transcribe with Whisper.
+ *  2. Pre-AI validation (anti-cheating + duration / length caps):
+ *       - empty transcript / no audio → band 0
+ *       - duration < 20s             → max band 3
+ *       - words < 30                 → max band 3.5
+ *       - words < 60                 → max band 4.5
+ *       - response is mostly repeated words → max band 3
+ *  3. AI evaluation of the four official IELTS criteria (Fluency,
+ *     Lexical, Grammar, Pronunciation) PLUS a relevance check against the
+ *     question. If the AI judges the answer unrelated to the question,
+ *     overall band is capped at 4.
+ *  4. Overall band = average of the four criteria, rounded with the IELTS
+ *     0.25/0.75 rule, then capped by any rules that triggered.
+ *  5. Returns a uniform explanation block:
+ *       { reasonForScore, strengths, weaknesses, suggestions }
+ *
+ * Accepts these optional form fields alongside the audio file:
+ *   - question:         the prompt the candidate was answering
+ *   - audioDurationSec: client-measured duration in seconds (for the < 20s cap)
+ *   - userId:           saved on the Firestore record
  */
 router.post("/evaluate", upload.single("audio"), async (req, res) => {
   try {
     console.log("🎤 Starting speaking evaluation...");
-    
+
     if (!req.file) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "No audio file provided",
-        success: false 
+        success: false,
       });
     }
 
     const audioFilePath = req.file.path;
     console.log("📁 Audio file saved at:", audioFilePath);
 
-    // Step 1: Transcribe audio using OpenAI Whisper
+    // ── Step 1: transcribe ────────────────────────────────────────────────
     console.log("🎧 Transcribing audio with Whisper...");
     const transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(audioFilePath),
       model: "whisper-1",
-      language: "en"
+      language: "en",
     });
 
     const transcript = (transcription.text || "").trim();
-    const wordCount = transcript.split(/\s+/).filter(Boolean).length;
-    console.log("📝 Transcript:", transcript, "| words:", wordCount);
+    const transcribedWords = countWords(transcript);
+    console.log("📝 Transcript:", transcript, "| words:", transcribedWords);
 
-    const question = (req.body && req.body.question) ? String(req.body.question).trim() : "";
+    const question = req.body?.question ? String(req.body.question).trim() : "";
+    const audioDurationSec = Number.isFinite(Number(req.body?.audioDurationSec))
+      ? Number(req.body.audioDurationSec)
+      : null;
 
-    // No speech: do not call AI and do not assign any band (no static evaluation)
-    if (wordCount === 0 || transcript.length < 2) {
-      fs.unlink(audioFilePath, (err) => { if (err) console.error("⚠️ Error deleting file:", err); });
-      return res.status(200).json({
-        transcript: transcript || "(no speech detected)",
-        success: true,
-        noSpeech: true,
-        message: "No speech detected. Please record your response and try again.",
-        feedback: null,
-        bandScore: null
+    // ── Step 2: deterministic validation ──────────────────────────────────
+    const validation = validateSpeakingSubmission({
+      transcript,
+      audioDurationSec,
+    });
+
+    // Empty transcript / no audio → short-circuit with band 0 (no AI call)
+    if (!validation.valid) {
+      fs.unlink(audioFilePath, (err) => {
+        if (err) console.error("⚠️ Error deleting file:", err);
       });
+      const payload = buildSpeakingShortCircuit({
+        transcript,
+        question,
+        wordCount: validation.wordCount,
+        audioDurationSec,
+        band: Number(validation.wordCap.cap ?? 0),
+        reason: validation.wordCap.reason || "No speech detected.",
+        issues: validation.issues,
+      });
+      return res.status(200).json(payload);
     }
 
-    // Step 2: Evaluate with AI only (no static/fallback band)
-    console.log("🤖 Evaluating response with GPT (AI-only, no static evaluation)...");
-
-    let feedback;
-
+    // ── Step 3: AI evaluation of the four criteria + relevance ────────────
+    let aiResult;
     try {
-      const evaluation = await openai.chat.completions.create({
+      const completion = await openai.chat.completions.create({
         model: "gpt-4o",
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+        max_tokens: 700,
         messages: [
           {
             role: "system",
-            content: `You are an IELTS Speaking examiner. Evaluate the candidate's response using ONLY the transcript and the question. Be strict and accurate.
+            content: `You are a senior IELTS Speaking examiner. Score the candidate using the official IELTS Speaking band descriptors based ONLY on the transcript (you cannot hear the audio).
 
-RULES:
-1. Score each criterion out of 10 based on what was actually said:
-   - FLUENCY: pace, hesitation, coherence
-   - LEXICAL: vocabulary range, word choice
-   - GRAMMAR: accuracy, sentence variety
-   - PRONUNCIATION: clarity
-2. If the response is very short or does not address the question, give low scores (1-4/10) and a low band (2.0-4.0) and explain why.
-3. BAND SCORE must be a single number from 1.0 to 9.0 in 0.5 steps.
+Return ONLY a JSON object with this exact schema (no markdown, no extra commentary):
+{
+  "scores": {
+    "fluency":       <number 0-9 in 0.5 steps>,   // Fluency & Coherence
+    "lexical":       <number 0-9 in 0.5 steps>,   // Lexical Resource
+    "grammar":       <number 0-9 in 0.5 steps>,   // Grammatical Range & Accuracy
+    "pronunciation": <number 0-9 in 0.5 steps>    // Pronunciation (estimated from transcript clarity, since audio is not available)
+  },
+  "feedback": {
+    "fluency":       "<1-2 sentences>",
+    "lexical":       "<1-2 sentences>",
+    "grammar":       "<1-2 sentences>",
+    "pronunciation": "<1-2 sentences>"
+  },
+  "strengths":   ["<short bullet>", "..."],   // 2-3 specific strengths
+  "weaknesses":  ["<short bullet>", "..."],   // 2-3 specific weaknesses
+  "suggestions": ["<short actionable tip>", "..."], // 3-5 concrete tips
+  "flags": {
+    "relevant":         <true if the response actually addresses the question, false otherwise>,
+    "relevance_reason": "<short reason or empty string>",
+    "meaningful":       <true if the response demonstrates meaningful communication; false if it is just words without content>,
+    "sufficient":       <true if there is enough content to assess IELTS criteria; false if too short>
+  }
+}
 
-Output format (use exactly these labels):
-FLUENCY: [score/10] - [brief comment]
-LEXICAL: [score/10] - [brief comment]
-GRAMMAR: [score/10] - [brief comment]
-PRONUNCIATION: [score/10] - [brief comment]
-BAND SCORE: [number e.g. 3.0 or 7.5]`
+Strict rules:
+- If the response is OFF-TOPIC, set relevant=false and DO NOT give Fluency above 5 or Lexical above 5.
+- If the response is on-topic but extremely short/limited, lower Lexical and Grammar accordingly.
+- If the response is mostly memorised template, lower Lexical.
+- Be specific in feedback — reference what the candidate actually said.`,
           },
           {
             role: "user",
             content: question
-              ? `Question: ${question}\n\nCandidate's transcript: "${transcript}"\n\nEvaluate the response.`
-              : `Candidate's transcript: "${transcript}"\n\nEvaluate the response.`
-          }
+              ? `Question: ${question}\n\nCandidate transcript (${transcribedWords} words):\n"""${transcript}"""\n\nReturn the JSON.`
+              : `Candidate transcript (${transcribedWords} words):\n"""${transcript}"""\n\nReturn the JSON.`,
+          },
         ],
-        max_tokens: 450,
-        temperature: 0.2
       });
 
-      const feedbackText = evaluation.choices[0].message.content.trim();
-      console.log("📊 AI evaluation feedback:", feedbackText);
-
-      const lines = feedbackText.split('\n').filter(line => line.trim());
-      const bandRaw = lines.find(line => line.startsWith('BAND SCORE:'))?.replace(/BAND SCORE:\s*/i, '').trim() || "";
-      const bandNum = parseFloat(bandRaw.replace(/[^0-9.]/g, ''), 10);
-      const bandScore = !Number.isNaN(bandNum) && bandNum >= 1 && bandNum <= 9 ? bandNum.toFixed(1) : bandRaw || "0";
-
-      feedback = {
-        fluency: lines.find(line => line.startsWith('FLUENCY:'))?.replace(/FLUENCY:\s*/i, '').trim() || "No fluency feedback",
-        lexical: lines.find(line => line.startsWith('LEXICAL:'))?.replace(/LEXICAL:\s*/i, '').trim() || "No lexical feedback",
-        grammar: lines.find(line => line.startsWith('GRAMMAR:'))?.replace(/GRAMMAR:\s*/i, '').trim() || "No grammar feedback",
-        pronunciation: lines.find(line => line.startsWith('PRONUNCIATION:'))?.replace(/PRONUNCIATION:\s*/i, '').trim() || "No pronunciation feedback",
-        bandScore
-      };
+      const content = completion.choices?.[0]?.message?.content;
+      if (!content) throw new Error("Empty AI response for speaking evaluation");
+      try {
+        aiResult = JSON.parse(content);
+      } catch (e) {
+        throw new Error("Failed to parse speaking evaluation JSON");
+      }
     } catch (openaiError) {
-      console.error("⚠️ OpenAI API failed for evaluation (no static fallback):", openaiError.message);
-      fs.unlink(audioFilePath, (err) => { if (err) console.error("⚠️ Error deleting file:", err); });
+      console.error("⚠️ OpenAI API failed for evaluation:", openaiError.message);
+      fs.unlink(audioFilePath, (err) => {
+        if (err) console.error("⚠️ Error deleting file:", err);
+      });
       return res.status(503).json({
         success: false,
         error: "AI evaluation is temporarily unavailable. Please try again.",
-        noSpeech: false
+        noSpeech: false,
       });
     }
+
+    const scores = {
+      fluency:       clampBand(aiResult?.scores?.fluency),
+      lexical:       clampBand(aiResult?.scores?.lexical),
+      grammar:       clampBand(aiResult?.scores?.grammar),
+      pronunciation: clampBand(aiResult?.scores?.pronunciation),
+    };
+
+    const flags = {
+      relevant:        aiResult?.flags?.relevant !== false,
+      relevanceReason: typeof aiResult?.flags?.relevance_reason === "string"
+        ? aiResult.flags.relevance_reason.trim()
+        : "",
+      meaningful:      aiResult?.flags?.meaningful !== false,
+      sufficient:      aiResult?.flags?.sufficient !== false,
+    };
+
+    // ── Step 4: average + apply caps ──────────────────────────────────────
+    const rawAverage = averageBand([
+      scores.fluency,
+      scores.lexical,
+      scores.grammar,
+      scores.pronunciation,
+    ]);
+    const rawOverallBand = clampBand(rawAverage);
+    let adjustedBand = rawOverallBand ?? 0;
+
+    const penalties = {};
+    const capReasons = [];
+
+    const wordCap = validation.wordCap.cap;
+    if (wordCap !== null && wordCap !== undefined) {
+      if (adjustedBand > wordCap) {
+        adjustedBand = wordCap;
+        penalties.lengthCap = true;
+        capReasons.push(validation.wordCap.reason);
+      }
+    }
+
+    if (!flags.relevant && adjustedBand > 4) {
+      adjustedBand = 4;
+      penalties.unrelatedCap = true;
+      capReasons.push(
+        flags.relevanceReason
+          ? `Response is off-topic: ${flags.relevanceReason} (capped at band 4).`
+          : "Response is off-topic — overall capped at band 4."
+      );
+    }
+
+    if (!flags.meaningful && adjustedBand > 3.5) {
+      adjustedBand = 3.5;
+      penalties.notMeaningful = true;
+      capReasons.push("Response lacks meaningful communication — capped at band 3.5.");
+    }
+
+    const overallBand = clampBand(adjustedBand);
+
+    // Build legacy `feedback` object the existing UI already renders
+    const fluencyText = stringOrSpeaking(aiResult?.feedback?.fluency, "No fluency feedback");
+    const lexicalText = stringOrSpeaking(aiResult?.feedback?.lexical, "No lexical feedback");
+    const grammarText = stringOrSpeaking(aiResult?.feedback?.grammar, "No grammar feedback");
+    const pronunciationText = stringOrSpeaking(
+      aiResult?.feedback?.pronunciation,
+      "Pronunciation cannot be fully assessed from text alone."
+    );
+
+    const legacyFeedback = {
+      fluency: `${scores.fluency ?? "-"} / 9 - ${fluencyText}`,
+      lexical: `${scores.lexical ?? "-"} / 9 - ${lexicalText}`,
+      grammar: `${scores.grammar ?? "-"} / 9 - ${grammarText}`,
+      pronunciation: `${scores.pronunciation ?? "-"} / 9 - ${pronunciationText}`,
+      bandScore: overallBand,
+    };
+
+    const aiStrengths = Array.isArray(aiResult?.strengths)
+      ? aiResult.strengths.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : [];
+    const aiWeaknesses = Array.isArray(aiResult?.weaknesses)
+      ? aiResult.weaknesses.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
+      : [];
+    const aiSuggestions = Array.isArray(aiResult?.suggestions)
+      ? aiResult.suggestions.filter((s) => typeof s === "string" && s.trim()).slice(0, 5)
+      : [];
+
+    const fallback = summariseStrengthsWeaknesses(scores, SPEAKING_CRITERIA_LABELS);
+    const strengths = aiStrengths.length ? aiStrengths : fallback.strengths;
+    const weaknesses = aiWeaknesses.length ? aiWeaknesses : fallback.weaknesses;
+    const suggestions = aiSuggestions.length
+      ? aiSuggestions
+      : [
+          "Use a wider range of linking expressions to improve coherence.",
+          "Stretch sentences with relative clauses or conditional structures.",
+          "Practise idiomatic vocabulary and topic-specific collocations.",
+        ];
+
+    const reasonForScore = buildSpeakingReason({
+      overallBand,
+      rawOverallBand,
+      scores,
+      capReasons,
+      wordCount: transcribedWords,
+      durationSec: audioDurationSec,
+    });
 
     // Clean up the uploaded file
     fs.unlink(audioFilePath, (err) => {
@@ -346,55 +505,135 @@ BAND SCORE: [number e.g. 3.0 or 7.5]`
       else console.log("🗑️ Audio file cleaned up");
     });
 
-    // Step 3: Save practice session to Firestore
+    // ── Step 5: persist + respond ─────────────────────────────────────────
     if (db) {
       try {
-        const practiceSession = {
-          userId: req.body.userId || 'anonymous',
-          question: req.body.question || 'Unknown question',
-          transcript: transcript,
-          feedback: feedback,
+        await db.collection("speaking_practice").add({
+          userId: req.body?.userId || "anonymous",
+          question: question || "Unknown question",
+          transcript,
+          feedback: legacyFeedback,
+          scores,
+          overallBand,
+          penalties,
+          capReasons,
           timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          type: 'recorded_practice'
-        };
-        
-        await db.collection('speaking_practice').add(practiceSession);
-        console.log("💾 Practice session saved to Firestore");
+          type: "recorded_practice",
+        });
       } catch (firestoreError) {
         console.error("⚠️ Error saving to Firestore:", firestoreError);
       }
     }
-    
-    const numericBand = typeof feedback.bandScore === "number"
-      ? feedback.bandScore
-      : parseFloat(String(feedback.bandScore || "0").replace(/[^0-9.]/g, ""), 10) || 0;
 
     console.log("✅ Evaluation completed successfully");
-    
-    res.json({
-      transcript: transcript,
-      feedback: feedback,
-      bandScore: Number.isNaN(numericBand) ? 0 : Math.min(9, Math.max(0, numericBand)),
-      success: true
+    return res.json({
+      success: true,
+      module: "speaking",
+      transcript,
+      audioDurationSec,
+      wordCount: transcribedWords,
+      scores,
+      feedback: legacyFeedback,
+      bandScore: overallBand,
+      band: overallBand,
+      overallBand,
+      rawOverallBand,
+      penalties,
+      capReasons,
+      flags,
+      summary: {
+        reasonForScore,
+        strengths,
+        weaknesses,
+        suggestions,
+      },
     });
-
   } catch (error) {
     console.error("❌ Error evaluating speaking:", error);
-    
-    // Clean up file if it exists
+
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlink(req.file.path, (err) => {
         if (err) console.error("⚠️ Error deleting audio file:", err);
       });
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: "Failed to evaluate speaking",
       message: error.message,
-      success: false 
+      success: false,
     });
   }
 });
+
+function stringOrSpeaking(value, fallback) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function buildSpeakingShortCircuit({
+  transcript,
+  question,
+  wordCount,
+  audioDurationSec,
+  band,
+  reason,
+  issues,
+}) {
+  const noSpeech = issues?.includes("empty-transcript");
+  const zeroBlock = `${band ?? 0} / 9 - ${reason || "Not enough content to assess."}`;
+  return {
+    success: true,
+    module: "speaking",
+    transcript: transcript || "(no speech detected)",
+    audioDurationSec,
+    wordCount,
+    noSpeech: !!noSpeech,
+    message: noSpeech ? "No speech detected. Please record your response and try again." : reason,
+    scores: { fluency: band, lexical: band, grammar: band, pronunciation: band },
+    feedback: noSpeech
+      ? null
+      : {
+          fluency: zeroBlock,
+          lexical: zeroBlock,
+          grammar: zeroBlock,
+          pronunciation: zeroBlock,
+          bandScore: band,
+        },
+    bandScore: noSpeech ? null : band,
+    band: noSpeech ? null : band,
+    overallBand: noSpeech ? null : band,
+    penalties: { invalidSubmission: true },
+    capReasons: [reason || "Submission could not be assessed."],
+    flags: { relevant: false, meaningful: false, sufficient: false },
+    summary: {
+      reasonForScore: reason || "Submission could not be assessed.",
+      strengths: [],
+      weaknesses: [reason || "Not enough speech to evaluate."],
+      suggestions: [
+        "Speak for at least 30–60 seconds to give the examiner enough to assess.",
+        "Address every part of the question with examples.",
+        "Vary your sentence structures and topic-specific vocabulary.",
+      ],
+    },
+  };
+}
+
+function buildSpeakingReason({ overallBand, rawOverallBand, scores, capReasons, wordCount, durationSec }) {
+  const parts = [];
+  parts.push(
+    `Overall band ${overallBand} from Fluency ${scores.fluency ?? "-"}, ` +
+    `Lexical ${scores.lexical ?? "-"}, Grammar ${scores.grammar ?? "-"}, ` +
+    `Pronunciation ${scores.pronunciation ?? "-"} (raw average ${rawOverallBand ?? "-"}).`
+  );
+  if (typeof wordCount === "number") {
+    parts.push(`Spoken words: ${wordCount}.`);
+  }
+  if (durationSec !== null && durationSec !== undefined) {
+    parts.push(`Speech duration: ${Math.round(durationSec)}s.`);
+  }
+  if (capReasons && capReasons.length) parts.push(...capReasons);
+  if (!capReasons?.length) parts.push("No penalties applied.");
+  return parts.join(" ");
+}
 
 /**
  * POST /api/speaking/realtime/start

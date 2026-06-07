@@ -4,6 +4,13 @@ const crypto = require("crypto");
 
 const router = express.Router();
 
+const {
+  scoreToBand,
+  isExactMatch,
+  countWords,
+} = require("../services/scoringService");
+const { semanticMatchBatch } = require("../services/answerMatchService");
+
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -393,68 +400,391 @@ router.get("/placeholder-audio", (req, res) => {
   res.send(Buffer.alloc(0));
 });
 
-// IELTS Listening raw score to band (40 questions)
-const LISTENING_BAND_TABLE = [
-  { min: 39, band: 9 },
-  { min: 37, band: 8.5 },
-  { min: 35, band: 8 },
-  { min: 32, band: 7.5 },
-  { min: 30, band: 7 },
-  { min: 26, band: 6.5 },
-  { min: 23, band: 6 },
-  { min: 18, band: 5.5 },
-  { min: 16, band: 5 },
-  { min: 0, band: 4.5 },
-];
-
-function scoreToBand(score) {
-  const entry = LISTENING_BAND_TABLE.find((e) => score >= e.min);
-  return entry ? entry.band : "4.5";
-}
-
 /**
  * POST /api/listening/evaluate
- * AI-based evaluation: returns band score and short feedback for dashboard integration.
+ *
+ * Supports TWO request shapes:
+ *
+ *  (A) NEW — full answer-based scoring (preferred):
+ *      { sections: [...], answers: { [questionId]: value } }
+ *      The server scores every question itself (strict for MCQ/matching,
+ *      semantic AI match for fill-style answers per official IELTS rules),
+ *      then derives the band from the IELTS Listening raw-score → band table.
+ *      Returns: { success, bandScore, correctCount, partialCount, wrongCount,
+ *      totalQuestions, accuracyPercent, sectionResults, questionFeedback,
+ *      summary: { reasonForScore, strengths, weaknesses, suggestions } }
+ *
+ *  (B) OLD — pre-computed score (kept for backwards compatibility with any
+ *      legacy client / cached deployment):
+ *      { totalScore, totalQuestions, sectionScores }
+ *      Server only converts to a band and adds an AI tip. Same response
+ *      shape as before plus the new explanation block when possible.
+ *
+ * AI is used ONLY for semantic matching of fill answers — band score is
+ * always derived deterministically from the raw correct count.
  */
 router.post("/evaluate", async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader("Content-Type", "application/json");
   try {
-    const { totalScore = 0, totalQuestions = 40, sectionScores = [] } = req.body || {};
-    const bandScore = parseFloat(scoreToBand(Number(totalScore)));
-    let feedback = `Listening: ${totalScore}/${totalQuestions} correct. Band ${bandScore}.`;
+    const body = req.body || {};
+    const useFullScoring =
+      Array.isArray(body.sections) &&
+      body.answers &&
+      typeof body.answers === "object";
 
-    if (process.env.OPENAI_API_KEY && sectionScores.length > 0) {
-      try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          temperature: 0.3,
-          max_tokens: 150,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an IELTS Listening assessor. In one short sentence (under 15 words), give a single encouraging or improvement tip based on the score. Do not repeat the band. Example: 'Good accuracy on Section 1; focus on note completion in Section 4.'",
-            },
-            {
-              role: "user",
-              content: `Raw score: ${totalScore}/${totalQuestions}. Band: ${bandScore}. Section scores: ${JSON.stringify(sectionScores)}. One short tip only.`,
-            },
-          ],
-        });
-        const tip = completion.choices[0]?.message?.content?.trim();
-        if (tip) feedback = `Band ${bandScore}. ${tip}`;
-      } catch (aiErr) {
-        console.warn("Listening AI feedback failed, using default:", aiErr.message);
-      }
+    if (useFullScoring) {
+      return await handleFullScoring(req, res, body);
     }
-
-    return res.json({ success: true, bandScore, feedback });
+    return await handleSummaryScoring(req, res, body);
   } catch (err) {
     console.error("❌ Listening evaluate error:", err);
-    return res.status(500).json({ success: false, error: "Evaluation failed" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Evaluation failed", details: err.message });
   }
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// New: full answer-based scoring (Reading-style)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function handleFullScoring(req, res, body) {
+  const { sections, answers } = body;
+  const items = [];
+  for (const section of sections) {
+    if (!section || !Array.isArray(section.questions)) continue;
+    for (const q of section.questions) {
+      items.push({
+        id: q.id,
+        sectionId: section.id,
+        sectionTitle: section.title,
+        type: q.type,
+        prompt: q.prompt,
+        expected: q.answer,
+        given: answers[q.id],
+        options: Array.isArray(q.options) ? q.options : null,
+        maxWords: q.maxWords,
+      });
+    }
+  }
+
+  const feedback = {};
+  const fillToCheck = [];
+
+  for (const it of items) {
+    const given = typeof it.given === "string" ? it.given.trim() : "";
+
+    if (!given) {
+      feedback[it.id] = {
+        status: "incorrect",
+        isCorrect: false,
+        userAnswer: "",
+        correctAnswer: formatExpectedListening(it),
+        reason: "No answer provided.",
+      };
+      continue;
+    }
+
+    if (isFillTypeListening(it.type) && it.maxWords && countWords(given) > it.maxWords) {
+      feedback[it.id] = {
+        status: "incorrect",
+        isCorrect: false,
+        userAnswer: given,
+        correctAnswer: formatExpectedListening(it),
+        reason: `Exceeded the ${it.maxWords}-word limit.`,
+      };
+      continue;
+    }
+
+    if (it.type === "multiple" || it.type === "matching") {
+      const isCorrect = String(given).trim().toLowerCase() ===
+        String(it.expected || "").trim().toLowerCase();
+      feedback[it.id] = {
+        status: isCorrect ? "correct" : "incorrect",
+        isCorrect,
+        userAnswer: normaliseChoiceDisplayListening(given, it.options),
+        correctAnswer: normaliseChoiceDisplayListening(it.expected, it.options),
+        reason: isCorrect ? "Exact match." : "Incorrect option selected.",
+      };
+      continue;
+    }
+
+    // Fill / sentence / note / table / summary completion
+    if (isExactMatch(given, it.expected)) {
+      feedback[it.id] = {
+        status: "correct",
+        isCorrect: true,
+        userAnswer: given,
+        correctAnswer: formatExpectedListening(it),
+        reason: "Exact match.",
+      };
+      continue;
+    }
+    fillToCheck.push(it);
+  }
+
+  // AI semantic match for fills that didn't exact-match
+  if (fillToCheck.length) {
+    let verdicts = {};
+    try {
+      verdicts = await semanticMatchBatch(
+        fillToCheck.map((it) => ({
+          id: it.id,
+          prompt: it.prompt,
+          correctAnswer: it.expected,
+          userAnswer: it.given,
+        }))
+      );
+    } catch (err) {
+      console.warn("[listening/evaluate] semantic match failed:", err.message);
+    }
+    for (const it of fillToCheck) {
+      const v = verdicts[it.id];
+      const verdict = v?.verdict || "incorrect";
+      const reason =
+        v?.reason ||
+        (verdict === "correct"
+          ? "Accepted as equivalent meaning."
+          : verdict === "partial"
+            ? "Captures the right idea but lacks precision."
+            : "Wording does not match the expected answer.");
+      feedback[it.id] = {
+        status: verdict,
+        isCorrect: verdict === "correct",
+        isPartial: verdict === "partial",
+        userAnswer: it.given,
+        correctAnswer: formatExpectedListening(it),
+        reason,
+      };
+    }
+  }
+
+  // Tally global + per-section
+  let correctCount = 0;
+  let partialCount = 0;
+  let wrongCount = 0;
+  const sectionResults = [];
+
+  for (const section of sections) {
+    if (!section || !Array.isArray(section.questions)) continue;
+    let sCorrect = 0;
+    let sPartial = 0;
+    let sWrong = 0;
+    for (const q of section.questions) {
+      const f = feedback[q.id];
+      if (!f) continue;
+      if (f.status === "correct") sCorrect += 1;
+      else if (f.status === "partial") sPartial += 1;
+      else sWrong += 1;
+    }
+    correctCount += sCorrect;
+    partialCount += sPartial;
+    wrongCount += sWrong;
+    sectionResults.push({
+      sectionId: section.id,
+      sectionTitle: section.title,
+      score: sCorrect,
+      partialScore: sPartial,
+      wrongScore: sWrong,
+      totalQuestions: section.questions.length,
+    });
+  }
+
+  const totalQuestions = items.length;
+  const weightedScore = correctCount + partialCount * 0.5;
+  const rawScoreForBand = Math.round(weightedScore);
+  const bandScore = scoreToBand(rawScoreForBand);
+  const accuracyPercent = totalQuestions
+    ? Math.round((correctCount / totalQuestions) * 100)
+    : 0;
+
+  const summary = buildListeningExplanation({
+    bandScore,
+    correctCount,
+    partialCount,
+    wrongCount,
+    totalQuestions,
+    sectionResults,
+  });
+
+  // Try to add a one-line encouragement from the AI on top, but if it fails
+  // we still return a perfectly valid response.
+  let feedbackText = `Band ${bandScore}. Score: ${correctCount}/${totalQuestions} correct${
+    partialCount ? `, ${partialCount} partial` : ""
+  }.`;
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.3,
+        max_tokens: 80,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an IELTS Listening assessor. In ONE short sentence (max 18 words), give a single concrete improvement tip based on the score breakdown. Do not repeat the band.",
+          },
+          {
+            role: "user",
+            content: `Score: ${correctCount}/${totalQuestions}. Per section: ${JSON.stringify(
+              sectionResults.map((r) => ({ id: r.sectionId, score: r.score, total: r.totalQuestions }))
+            )}.`,
+          },
+        ],
+      });
+      const tip = completion.choices?.[0]?.message?.content?.trim();
+      if (tip) feedbackText = `Band ${bandScore}. ${tip}`;
+    } catch (aiErr) {
+      console.warn("Listening AI tip failed, using default:", aiErr.message);
+    }
+  }
+
+  return res.json({
+    success: true,
+    module: "listening",
+    bandScore,
+    band: bandScore,
+    rawScore: rawScoreForBand,
+    correctCount,
+    partialCount,
+    wrongCount,
+    totalQuestions,
+    accuracyPercent,
+    sectionResults,
+    questionFeedback: feedback,
+    feedback: feedbackText, // legacy field kept for existing client UI slot
+    summary,
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Backwards-compatible: pre-computed totals (no per-question AI checks)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function handleSummaryScoring(req, res, body) {
+  const { totalScore = 0, totalQuestions = 40, sectionScores = [] } = body;
+  const bandScore = scoreToBand(Number(totalScore));
+  let feedbackText = `Listening: ${totalScore}/${totalQuestions} correct. Band ${bandScore}.`;
+
+  if (process.env.OPENAI_API_KEY && Array.isArray(sectionScores) && sectionScores.length > 0) {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.3,
+        max_tokens: 80,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an IELTS Listening assessor. In ONE short sentence (max 18 words), give a single concrete improvement tip based on the score. Do not repeat the band.",
+          },
+          {
+            role: "user",
+            content: `Raw score: ${totalScore}/${totalQuestions}. Band: ${bandScore}. Section scores: ${JSON.stringify(sectionScores)}.`,
+          },
+        ],
+      });
+      const tip = completion.choices?.[0]?.message?.content?.trim();
+      if (tip) feedbackText = `Band ${bandScore}. ${tip}`;
+    } catch (aiErr) {
+      console.warn("Listening AI feedback failed, using default:", aiErr.message);
+    }
+  }
+
+  const summary = buildListeningExplanation({
+    bandScore,
+    correctCount: Number(totalScore) || 0,
+    partialCount: 0,
+    wrongCount: Math.max(0, (Number(totalQuestions) || 40) - (Number(totalScore) || 0)),
+    totalQuestions: Number(totalQuestions) || 40,
+    sectionResults: Array.isArray(sectionScores)
+      ? sectionScores.map((s) => ({
+          sectionId: s.sectionId,
+          sectionTitle: s.sectionTitle || `Section ${s.sectionId}`,
+          score: Number(s.score) || 0,
+          totalQuestions: Number(s.total ?? s.totalQuestions) || 10,
+        }))
+      : [],
+  });
+
+  return res.json({ success: true, bandScore, feedback: feedbackText, summary });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+function isFillTypeListening(type) {
+  return !["multiple", "matching"].includes(String(type || "").toLowerCase());
+}
+
+function normaliseChoiceDisplayListening(value, options) {
+  if (!value) return "";
+  const trimmed = String(value).trim();
+  if (Array.isArray(options) && options.length) {
+    const upper = trimmed.toUpperCase();
+    const found = options.find((o) => String(o.value || "").toUpperCase() === upper);
+    if (found) return `${found.value}. ${found.label}`;
+  }
+  return trimmed;
+}
+
+function formatExpectedListening(item) {
+  if (Array.isArray(item.expected)) return item.expected.filter(Boolean).join(" / ");
+  if (item.options && (item.type === "multiple" || item.type === "matching")) {
+    return normaliseChoiceDisplayListening(item.expected, item.options);
+  }
+  return item.expected == null ? "" : String(item.expected);
+}
+
+function buildListeningExplanation({
+  bandScore,
+  correctCount,
+  partialCount,
+  wrongCount,
+  totalQuestions,
+  sectionResults,
+}) {
+  const strengths = [];
+  const weaknesses = [];
+  for (const r of sectionResults) {
+    if (!r.totalQuestions) continue;
+    const ratio = r.score / r.totalQuestions;
+    if (ratio >= 0.8) {
+      strengths.push(
+        `${r.sectionTitle}: ${r.score}/${r.totalQuestions} — strong listening focus.`
+      );
+    } else if (ratio <= 0.4) {
+      weaknesses.push(
+        `${r.sectionTitle}: only ${r.score}/${r.totalQuestions} — needs more practice.`
+      );
+    }
+  }
+  if (!strengths.length && correctCount > 0) {
+    strengths.push(`Overall ${correctCount}/${totalQuestions} correct.`);
+  }
+  if (!weaknesses.length && wrongCount > 0) {
+    weaknesses.push(`${wrongCount} questions missed in total.`);
+  }
+  const suggestions = [];
+  if (wrongCount > totalQuestions / 2) {
+    suggestions.push("Use the pre-section reading time to predict the type of answer expected.");
+    suggestions.push("Practise note-taking with abbreviations to keep up with monologues.");
+  }
+  if (partialCount > 0) {
+    suggestions.push("Listen for exact wording — IELTS rarely accepts loose paraphrases.");
+  }
+  if (!suggestions.length) {
+    suggestions.push("Stay focused through all four sections — accuracy must be consistent for band 7+.");
+  }
+  return {
+    reasonForScore: `Band ${bandScore} from ${correctCount} correct${partialCount ? ` + ${partialCount} partial` : ""} out of ${totalQuestions}.`,
+    strengths,
+    weaknesses,
+    suggestions,
+  };
+}
 
 /**
  * GET /api/listening/generate
