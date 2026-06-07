@@ -18,6 +18,14 @@ async function fetchOpenAIRealtime(path, options) {
   try { parsed = text ? JSON.parse(text) : text; } catch (e) { }
   console.log('⬅️ OpenAI response status:', response.status);
   console.log('⬅️ OpenAI response body:', parsed);
+  if (response.status === 404 && parsed && parsed.error && typeof parsed.error.message === 'string' && parsed.error.message.includes('Invalid URL')) {
+    const err = new Error('OpenAI Realtime endpoint rejected the URL. Likely your API key/account is not enabled for Realtime.');
+    err.name = 'OpenAIInvalidURLError';
+    err.openai = parsed;
+    err.status = response.status;
+    throw err;
+  }
+
   return { ok: response.ok, status: response.status, bodyText: text, body: parsed };
 }
 
@@ -65,6 +73,13 @@ router.get('/realtime-token', async (req, res) => {
 
   } catch (e) {
     console.error('❌ Error creating Realtime token:', e);
+    if (e.name === 'OpenAIInvalidURLError') {
+      return res.status(502).json({
+        error: 'Realtime feature not available for API key',
+        message: 'OpenAI returned "Invalid URL" for Realtime endpoint. Ensure your OpenAI API key/org has Realtime access or use a Realtime-enabled key.',
+        details: e.openai || null
+      });
+    }
     return res.status(500).json({ error: 'Unexpected error', message: e.message });
   }
 });
