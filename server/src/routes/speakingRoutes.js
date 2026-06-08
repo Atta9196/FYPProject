@@ -13,7 +13,7 @@ const {
   countWords,
   summariseStrengthsWeaknesses,
 } = require("../services/scoringService");
-const { createRealtimeClientSecret } = require("../services/realtimeSessionService");
+const { createRealtimeClientSecret, connectRealtimeCall } = require("../services/realtimeSessionService");
 
 const router = express.Router();
 
@@ -2029,6 +2029,36 @@ router.get("/history/:userId", async (req, res) => {
       error: "Failed to fetch history",
       message: error.message,
       success: false
+    });
+  }
+});
+
+/**
+ * POST /api/speaking/realtime/connect
+ * Unified WebRTC SDP exchange — browser sends offer SDP, server returns answer SDP.
+ * Body: raw SDP (Content-Type: application/sdp or text/plain)
+ */
+router.post("/realtime/connect", express.text({ type: ["application/sdp", "text/plain", "*/*"], limit: "1mb" }), async (req, res) => {
+  try {
+    const sdpOffer = req.body;
+    if (!sdpOffer || !String(sdpOffer).trim()) {
+      return res.status(400).json({ error: "SDP offer body required", success: false });
+    }
+
+    console.log("🔗 Realtime WebRTC connect request, SDP length:", String(sdpOffer).length);
+
+    const { answerSdp, model } = await connectRealtimeCall(String(sdpOffer));
+
+    res.set("Content-Type", "application/sdp");
+    return res.status(200).send(answerSdp);
+  } catch (error) {
+    console.error("❌ Realtime connect failed:", error.message);
+    return res.status(error.status || 500).json({
+      error: "Failed to connect Realtime session",
+      message: error.message,
+      model: error.model,
+      details: error.openai || null,
+      success: false,
     });
   }
 });

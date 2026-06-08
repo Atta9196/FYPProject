@@ -1,7 +1,15 @@
 const fetch = require('node-fetch');
 
 const OPENAI_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com').replace(/\/$/, '');
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
+
+// GA models work with POST /v1/realtime/calls; dated preview IDs often fail on WebRTC.
+const REALTIME_MODEL_CANDIDATES = (
+  process.env.OPENAI_REALTIME_MODEL
+    ? [process.env.OPENAI_REALTIME_MODEL]
+    : ['gpt-realtime', 'gpt-4o-realtime-preview', 'gpt-4o-realtime-preview-2024-12-17']
+);
+
+const REALTIME_MODEL = REALTIME_MODEL_CANDIDATES[0];
 
 const IELTS_EXAMINER_INSTRUCTIONS = `You are Alex, a calm professional IELTS Speaking examiner on a live voice call with a candidate.
 
@@ -21,8 +29,8 @@ FLOW (in order):
 
 const DEFAULT_INSTRUCTIONS = IELTS_EXAMINER_INSTRUCTIONS;
 
-function buildSessionConfig(overrides = {}) {
-  const session = {
+function buildSessionObject(overrides = {}) {
+  return {
     type: 'realtime',
     model: overrides.model || REALTIME_MODEL,
     instructions: overrides.instructions || DEFAULT_INSTRUCTIONS,
@@ -46,10 +54,82 @@ function buildSessionConfig(overrides = {}) {
       overrides.max_response_output_tokens ??
       150,
   };
-
-  return { session };
 }
 
+function buildSessionConfig(overrides = {}) {
+  return { session: buildSessionObject(overrides) };
+}
+
+/**
+ * Server-relayed WebRTC SDP exchange.
+ * Mints an ephemeral token (gpt-realtime) then forwards the browser SDP offer to OpenAI.
+ */
+async function connectRealtimeCall(sdpOffer, overrides = {}) {
+  if (!sdpOffer || typeof sdpOffer !== 'string' || !sdpOffer.trim().startsWith('v=')) {
+    const err = new Error('Invalid SDP offer');
+    err.status = 400;
+    throw err;
+  }
+
+  const models = overrides.model ? [overrides.model] : REALTIME_MODEL_CANDIDATES;
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const tokenPayload = await createRealtimeClientSecret({ ...overrides, model });
+      const url = `${OPENAI_BASE}/v1/realtime/calls`;
+
+      console.log('➡️ Realtime WebRTC relay:', url, 'model:', tokenPayload.model);
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenPayload.value}`,
+          'Content-Type': 'application/sdp',
+        },
+        body: sdpOffer,
+      });
+
+      const answerSdp = await response.text();
+
+      if (response.ok && answerSdp.trim().startsWith('v=')) {
+        console.log('✅ Realtime WebRTC answer received, model:', tokenPayload.model);
+        return { answerSdp, model: tokenPayload.model, sessionId: tokenPayload.id };
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(answerSdp);
+      } catch {
+        parsed = { message: answerSdp };
+      }
+
+      const code = parsed?.error?.code || '';
+      const message = parsed?.error?.message || answerSdp;
+      console.warn(`⚠️ Realtime relay failed (${model}):`, response.status, message);
+
+      lastError = new Error(`OpenAI Realtime connect failed (${response.status}): ${message}`);
+      lastError.status = response.status;
+      lastError.openai = parsed;
+      lastError.model = model;
+
+      if (response.status === 404 && (code === 'model_not_found' || message.includes('does not exist'))) {
+        continue;
+      }
+      throw lastError;
+    } catch (e) {
+      if (e.status === 404 || e.message?.includes('does not exist')) {
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw lastError || new Error('No Realtime model available for this API key');
+}
+
+/** @deprecated Use connectRealtimeCall — kept for legacy clients */
 async function createRealtimeClientSecret(overrides = {}) {
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY not configured');
@@ -57,61 +137,62 @@ async function createRealtimeClientSecret(overrides = {}) {
     throw err;
   }
 
-  const payload = buildSessionConfig(overrides);
-  const url = `${OPENAI_BASE}/v1/realtime/client_secrets`;
+  const models = overrides.model ? [overrides.model] : REALTIME_MODEL_CANDIDATES;
+  let lastError = null;
 
-  console.log('➡️ Creating Realtime client secret:', url);
-  console.log('➡️ Model:', payload.session.model);
+  for (const model of models) {
+    const payload = buildSessionConfig({ ...overrides, model });
+    const url = `${OPENAI_BASE}/v1/realtime/client_secrets`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  let body;
-  const text = await response.text();
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
+    const text = await response.text();
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+
+    if (response.ok) {
+      const token = body?.value || body?.client_secret?.value;
+      if (!token) break;
+      return {
+        value: token,
+        expires_at: body.expires_at,
+        client_secret: { value: token },
+        model: body.session?.model || model,
+        id: body.session?.id || `realtime-${Date.now()}`,
+        success: true,
+      };
+    }
+
+    lastError = new Error(`OpenAI API error: ${response.status} - ${text}`);
+    lastError.status = response.status;
+    lastError.openai = body;
+
+    if (response.status === 404) continue;
+    throw lastError;
   }
 
-  console.log('⬅️ OpenAI client_secrets status:', response.status);
-  if (!response.ok) {
-    console.error('⬅️ OpenAI client_secrets body:', body);
-    const err = new Error(`OpenAI API error: ${response.status} - ${JSON.stringify(body)}`);
-    err.status = response.status;
-    err.openai = body;
-    throw err;
-  }
-
-  const token = body?.value || body?.client_secret?.value;
-  if (!token) {
-    const err = new Error('No ephemeral token in OpenAI response');
-    err.status = 502;
-    err.openai = body;
-    throw err;
-  }
-
-  return {
-    value: token,
-    expires_at: body.expires_at,
-    client_secret: { value: token },
-    model: body.session?.model || payload.session.model,
-    id: body.session?.id || body.id || `realtime-${Date.now()}`,
-    success: true,
-  };
+  throw lastError || new Error('Failed to create Realtime token');
 }
 
 module.exports = {
+  connectRealtimeCall,
   createRealtimeClientSecret,
   buildSessionConfig,
+  buildSessionObject,
   REALTIME_MODEL,
+  REALTIME_MODEL_CANDIDATES,
   DEFAULT_INSTRUCTIONS,
   IELTS_EXAMINER_INSTRUCTIONS,
 };

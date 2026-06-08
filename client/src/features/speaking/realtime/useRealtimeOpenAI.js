@@ -10,15 +10,6 @@ function resolveServerUrl() {
   return 'https://ielts-coach-backend.onrender.com';
 }
 
-function extractToken(session) {
-  if (!session) return null;
-  if (typeof session.value === 'string') return session.value;
-  if (typeof session.client_secret === 'string') return session.client_secret;
-  if (session.client_secret?.value) return session.client_secret.value;
-  if (session.data?.client_secret?.value) return session.data.client_secret.value;
-  return null;
-}
-
 function playRemoteAudio(el) {
   if (!el) return;
   el.muted = false;
@@ -31,6 +22,66 @@ function playRemoteAudio(el) {
       console.warn('⚠️ Autoplay blocked — click anywhere to hear AI:', err.message);
     });
   }
+}
+
+/** Exchange WebRTC SDP via server relay; fallback to ephemeral token if relay route missing. */
+async function exchangeSdpWithServer(serverUrl, offerSdp) {
+  const connectUrl = `${serverUrl}/api/speaking/realtime/connect`;
+  const connectResp = await fetch(connectUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/sdp' },
+    body: offerSdp,
+  });
+
+  const connectBody = await connectResp.text();
+
+  if (connectResp.ok && connectBody.trim().startsWith('v=')) {
+    console.log('✅ SDP exchange via server relay');
+    return connectBody;
+  }
+
+  // Old backend without /connect — use token + direct OpenAI (gpt-realtime only)
+  if (connectResp.status === 404) {
+    console.log('🔄 /realtime/connect not found — token fallback');
+    const tokenResp = await fetch(`${serverUrl}/api/speaking/realtime/token`);
+    if (!tokenResp.ok) {
+      throw new Error('Backend missing /realtime/connect and token fetch failed. Deploy latest server.');
+    }
+    const session = await tokenResp.json();
+    const token = session.value || session.client_secret?.value;
+    if (!token) throw new Error('No ephemeral token from server');
+
+    if (session.model?.includes('2024-12-17') || session.model?.includes('preview')) {
+      throw new Error(
+        'Backend is outdated (preview Realtime model). Deploy the latest server with gpt-realtime and /api/speaking/realtime/connect.'
+      );
+    }
+
+    const openaiResp = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/sdp',
+      },
+      body: offerSdp,
+    });
+    const answer = await openaiResp.text();
+    if (!openaiResp.ok) {
+      let msg = answer;
+      try { msg = JSON.parse(answer).error?.message || answer; } catch {}
+      throw new Error(`SDP exchange failed (${openaiResp.status}): ${msg}`);
+    }
+    if (!answer.trim().startsWith('v=')) throw new Error('OpenAI did not return valid SDP answer');
+    console.log('✅ SDP exchange via token fallback, model:', session.model);
+    return answer;
+  }
+
+  let errMsg = connectBody;
+  try {
+    const j = JSON.parse(connectBody);
+    errMsg = j.message || j.error || connectBody;
+  } catch {}
+  throw new Error(`SDP exchange failed (${connectResp.status}): ${errMsg}`);
 }
 
 export function createRealtimeAgent() {
@@ -218,31 +269,6 @@ export function createRealtimeAgent() {
       playRemoteAudio(remoteAudioEl);
 
       const SERVER_URL = resolveServerUrl();
-      let resp;
-
-      for (const [label, url, opts] of [
-        ['token', `${SERVER_URL}/api/speaking/realtime/token`, { method: 'GET', headers: { 'Content-Type': 'application/json' } }],
-        ['voice', `${SERVER_URL}/api/voice/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }],
-        ['auth', `${SERVER_URL}/api/auth/realtime-token`, { method: 'GET' }],
-      ]) {
-        resp = await fetch(url, opts);
-        if (resp.ok) {
-          console.log(`✅ Realtime token from ${label}`);
-          break;
-        }
-        console.log(`🔄 ${label} failed (${resp.status}), trying next…`);
-      }
-
-      if (!resp?.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.message || `Token fetch failed (${resp?.status})`);
-      }
-
-      const session = await resp.json();
-      const clientSecretValue = extractToken(session);
-      if (!clientSecretValue) throw new Error('No ephemeral token in server response');
-
-      console.log('✅ Ephemeral token received, model:', session.model);
 
       pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
 
@@ -289,22 +315,11 @@ export function createRealtimeAgent() {
         setTimeout(resolve, 2000);
       });
 
-      const sdpResp = await fetch('https://api.openai.com/v1/realtime/calls', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${clientSecretValue}`,
-          'Content-Type': 'application/sdp',
-        },
-        body: pc.localDescription.sdp,
-      });
+      console.log('🔗 Sending SDP offer to server for Realtime connect…');
+      const answerText = await exchangeSdpWithServer(SERVER_URL, pc.localDescription.sdp);
 
-      if (!sdpResp.ok) {
-        const errText = await sdpResp.text().catch(() => '');
-        throw new Error(`SDP exchange failed (${sdpResp.status}): ${errText}`);
-      }
-
-      await pc.setRemoteDescription({ type: 'answer', sdp: await sdpResp.text() });
-      console.log('✅ SDP exchange complete');
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerText });
+      console.log('✅ WebRTC SDP answer applied');
 
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('WebRTC connection timeout')), 15000);
