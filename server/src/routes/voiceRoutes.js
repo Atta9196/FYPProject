@@ -4,6 +4,7 @@ const OpenAI = require("openai");
 const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
+const { createRealtimeClientSecret } = require("../services/realtimeSessionService");
 
 const openai = new OpenAI({ 
   apiKey: process.env.OPENAI_API_KEY 
@@ -58,21 +59,9 @@ async function fetchOpenAIRealtime(path, options) {
 router.post("/session", async (req, res) => {
   try {
     console.log("🎙️ Creating Realtime API session...");
-    
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ 
-        error: "OPENAI_API_KEY not configured",
-        success: false 
-      });
-    }
 
-    // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
-    // Using latest model for better real-time voice responses
-    const payload = {
-      model: "GPT-4o Realtime", // Latest model for better performance
-      voice: "verse", // "verse" for natural voice, or "alloy", "ash", "ballad", "coral", "echo", "sage"
-      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
-        instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
+    const session = await createRealtimeClientSecret({
+      instructions: `You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.
 
 MANDATORY RULES - YOU MUST FOLLOW THESE:
 1. READ AND UNDERSTAND THE USER'S ENTIRE RESPONSE BEFORE YOU REPLY
@@ -96,140 +85,27 @@ RESPONSE GENERATION PROCESS:
 4. FOURTH: Craft a response that directly addresses their specific content
 5. FIFTH: Include specific references to what they said to show you understood
 
-EXAMPLE OF GOOD RESPONSES:
-- User: "I work as a software engineer and I love coding."
-- GOOD: "That's interesting! What kind of projects do you work on as a software engineer? What do you enjoy most about coding?"
-- BAD: "Tell me about your job." (ignores what they just said)
-
-- User: "Do you think technology makes life easier?"
-- GOOD: "I think technology definitely makes many aspects of life easier, especially communication and access to information. What's your experience been?"
-- BAD: "That's nice. Tell me more." (doesn't answer their question)
-
-Personality:
-- Warm, encouraging, genuinely interested in the candidate
-- Show active listening by referencing SPECIFIC things they mentioned
-- Ask intelligent follow-up questions that demonstrate you UNDERSTOOD their response
-- Be conversational and natural, like talking to a friend who's also an examiner
-
-Active Listening & Understanding:
-- Pay attention to the FULL meaning of what the user says, not just individual words
-- If they ask a question, ANSWER IT directly and clearly - don't deflect or ignore it
-- If they share information, acknowledge it SPECIFICALLY and build on it naturally
-- Remember details they mention (work, hobbies, experiences) and reference them later
-- Show genuine curiosity about their responses by asking relevant follow-ups
-
-Conversation Flow:
-- ALWAYS start by greeting warmly and asking an engaging opening question immediately
-- When the user responds, PROCESS their full answer completely before responding
-- Build your next question/comment on what they ACTUALLY said, showing you understood
-- If they ask "What do you think?" or similar, give your opinion naturally and directly
-- If they share something interesting, show enthusiasm and ask for more details about THAT topic
-- Keep responses concise (1-2 sentences) but meaningful and contextually relevant
-
-Response Quality - CRITICAL:
-- ALWAYS respond to the USER'S ACTUAL QUESTION or statement, never use a generic template
-- If they ask about your opinion, give it naturally and directly
-- If they share a story, acknowledge the SPECIFIC story and ask relevant follow-ups about it
-- If they seem confused, clarify gently by addressing their specific confusion
-- Show you're engaged by referencing SPECIFIC details from their responses
-- NEVER give a response that could apply to any conversation - it must be specific to what they just said
-
-Context Retention:
-- Remember what the user has said throughout the conversation
-- Reference previous topics they mentioned when relevant
-- Build on the conversation thread naturally
-- Don't ask questions about things they've already told you
-
-IELTS Practice Focus:
-- Mix Part 1 style questions (personal info, daily life) naturally
-- Gradually introduce Part 3 style questions (opinions, comparisons, abstract topics)
-- Provide gentle, constructive feedback when appropriate
-- Keep the conversation flowing naturally like a real IELTS interview
-
-Proactive Engagement & Patience:
-- BE PATIENT, especially with the first question - wait at least 8-10 seconds before prompting
-- NEVER say "you have not answered me" or "you didn't answer" - this is negative and discouraging
-- If there's silence after asking a question, wait patiently (8-10 seconds minimum)
-- After waiting, if still no response, gently encourage: "Take your time, there's no rush" or "Feel free to share your thoughts when you're ready"
-- If the user seems hesitant, be supportive: "Take your time, I'm here to help you practice" or "No pressure, just speak naturally"
-- NEVER pressure the user or make them feel bad for not responding immediately
-- Keep the energy positive, supportive, and encouraging throughout
-- Remember: This is practice - the user may need time to think, especially at the start
-
 FINAL REMINDER:
 - You MUST understand what the user says before responding
 - You MUST respond directly to their specific content
 - You MUST show you understood by referencing their specific words or ideas
 - You MUST answer their questions if they ask any
 - You are having a REAL conversation - treat it as such.`,
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5, // Higher threshold for better voice detection
-          prefix_padding_ms: 300, // Capture context before user speaks
-          silence_duration_ms: 800 // Shorter silence for faster turn-taking (more natural conversation)
-        },
-        temperature: 0.7 // Slightly lower for more focused, context-aware responses
-      };
-
-      const { ok, status, body } = await fetchOpenAIRealtime('/v1/realtime/sessions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!ok) {
-        throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
-      }
-
-      const session = body;
+    });
 
     console.log("✅ Realtime session created:", session.id);
-    console.log("📋 Session object keys:", Object.keys(session));
-    console.log("🔑 client_secret exists:", !!session.client_secret);
-    console.log("🔑 client_secret type:", typeof session.client_secret);
-    
-    // Log client_secret.value specifically
-    if (session.client_secret) {
-      if (session.client_secret.value) {
-        console.log("✅ client_secret.value found:", session.client_secret.value.substring(0, 20) + "...");
-      } else {
-        console.warn("⚠️ client_secret exists but .value is missing");
-        console.log("🔑 client_secret object:", JSON.stringify(session.client_secret, null, 2));
-      }
-    } else {
-      console.warn("⚠️ client_secret not found in session object");
-      console.log("📋 Full session object:", JSON.stringify(session, null, 2));
-    }
-    
-    // Ensure client_secret is included in response and add model
-    const responseData = {
+
+    res.json({
       ...session,
-      model: session.model || "GPT-4o Realtime", // Include model in response
-      success: true,
-      message: "Session created successfully"
-    };
-    
-    res.json(responseData);
-    
+      message: "Session created successfully",
+    });
   } catch (error) {
     console.error("❌ Error creating Realtime session:", error);
-    if (error.name === 'OpenAIInvalidURLError') {
-      return res.status(502).json({
-        error: "Realtime feature not available for API key",
-        message: "OpenAI returned 'Invalid URL' for Realtime endpoint. Ensure your OpenAI API key/org has Realtime access or use a Realtime-enabled key.",
-        details: error.openai || null,
-        success: false
-      });
-    }
-
-    res.status(500).json({
+    return res.status(error.status || 500).json({
       error: "Failed to create Realtime session",
       message: error.message,
-      success: false
+      details: error.openai || null,
+      success: false,
     });
   }
 });

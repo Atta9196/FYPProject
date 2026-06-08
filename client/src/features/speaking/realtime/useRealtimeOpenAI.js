@@ -77,10 +77,12 @@ export function createRealtimeAgent() {
         throw new Error('No session data received from server');
       }
       
-      // Check for client_secret in various possible locations
+      // Check for ephemeral token in various possible locations (new + legacy API)
       let clientSecretValue = null;
-      
-      if (session.client_secret) {
+
+      if (typeof session.value === 'string') {
+        clientSecretValue = session.value;
+      } else if (session.client_secret) {
         // Direct client_secret - must have .value property
         if (typeof session.client_secret === 'string') {
           // If it's a string, use it directly (legacy format)
@@ -517,16 +519,12 @@ TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routin
         setTimeout(resolve, 1500); // fallback timeout
       });
 
-      // 7) Send SDP to OpenAI Realtime API
-      // Use the correct endpoint format: https://api.openai.com/v1/realtime?model=...
-      // Get the model from session (should match what backend used)
-      const model = session.model || 'gpt-4o-realtime-preview-2024-12-17';
-      const realtimeEndpoint = `https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+      // 7) Send SDP to OpenAI Realtime API (unified WebRTC calls endpoint)
+      const realtimeEndpoint = 'https://api.openai.com/v1/realtime/calls';
       
-      console.log('🔑 Using client_secret token (first 20 chars):', clientSecretValue.substring(0, 20) + '...');
+      console.log('🔑 Using ephemeral token (first 20 chars):', clientSecretValue.substring(0, 20) + '...');
       console.log('📋 SDP offer length:', pc.localDescription.sdp.length);
       console.log('🔗 Connecting to OpenAI Realtime API:', realtimeEndpoint);
-      console.log('🤖 Using model:', model);
       
       const sdpResp = await fetch(realtimeEndpoint, {
         method: 'POST',

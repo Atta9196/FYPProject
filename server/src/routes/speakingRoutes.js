@@ -13,6 +13,7 @@ const {
   countWords,
   summariseStrengthsWeaknesses,
 } = require("../services/scoringService");
+const { createRealtimeClientSecret } = require("../services/realtimeSessionService");
 
 const router = express.Router();
 
@@ -27,32 +28,6 @@ const SPEAKING_CRITERIA_LABELS = {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
-// Allow overriding OpenAI base URL via env (useful for proxied environments)
-const OPENAI_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com').replace(/\/$/, '');
-
-async function fetchOpenAIRealtime(path, options) {
-  const url = `${OPENAI_BASE}${path}`;
-  console.log('➡️ Calling OpenAI Realtime URL:', url);
-  console.log('➡️ Request options:', { method: options.method, headers: options.headers, bodyPresent: !!options.body });
-
-  const response = await fetch(url, options);
-  let text = null;
-  try { text = await response.text(); } catch (e) { console.warn('⚠️ Failed to read response text', e); }
-  let parsed = text;
-  try { parsed = text ? JSON.parse(text) : text; } catch (e) { }
-  console.log('⬅️ OpenAI response status:', response.status);
-  console.log('⬅️ OpenAI response body:', parsed);
-  if (response.status === 404 && parsed && parsed.error && typeof parsed.error.message === 'string' && parsed.error.message.includes('Invalid URL')) {
-    const err = new Error('OpenAI Realtime endpoint rejected the URL. Likely your API key/account is not enabled for Realtime.');
-    err.name = 'OpenAIInvalidURLError';
-    err.openai = parsed;
-    err.status = response.status;
-    throw err;
-  }
-
-  return { ok: response.ok, status: response.status, bodyText: text, body: parsed };
-}
 
 // Initialize Firestore
 let db;
@@ -2066,83 +2041,20 @@ router.get("/history/:userId", async (req, res) => {
 router.get("/realtime/token", async (req, res) => {
   try {
     console.log("🎙️ Creating Realtime API token for real-time voice conversation...");
-    
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ 
-        error: "OPENAI_API_KEY not configured",
-        success: false 
-      });
-    }
 
-    // Create session using OpenAI Realtime API via HTTP (SDK doesn't support realtime yet)
-    const payload = {
-      model: "gpt-4o-realtime-preview-2024-12-17", // Latest model for best performance
-      voice: "verse", // Natural voice for IELTS practice
-      modalities: ["text", "audio"], // Enable both text and audio for real-time voice
-      temperature: 0.8,
-      instructions: "You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.",
-        // Also transcribe candidate audio so the client gets a live user
-        // transcript (drives the boxed feedback at the end).
-        input_audio_transcription: { model: "whisper-1" },
-        // Keep examiner replies short and natural (~1-2 sentences).
-        max_response_output_tokens: 120,
-        // Server-side VAD tuned for a ChatGPT-style natural conversation:
-        //   - threshold 0.5     → OpenAI default; catches quiet speakers.
-        //   - prefix_padding 300ms → captures the start of the first word.
-        //   - silence_duration 600ms → fast turn-taking, like a real chat.
-        //   - create_response: true → after the candidate finishes, the AI
-        //                              automatically generates the next turn.
-        //   - interrupt_response: true → the MOMENT the candidate starts
-        //                                speaking, the AI's in-flight reply
-        //                                is cancelled (true barge-in) so the
-        //                                candidate never has to wait or use
-        //                                a manual "Interrupt" button.
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 600,
-          create_response: true,
-          interrupt_response: true
-        }
-      };
+    const session = await createRealtimeClientSecret({
+      instructions:
+        "You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.",
+    });
 
-        const { ok, status, body } = await fetchOpenAIRealtime('/v1/realtime/sessions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (!ok) {
-          throw new Error(`OpenAI API error: ${status} - ${JSON.stringify(body)}`);
-        }
-
-        const session = body;
-
-        return res.json({
-          ...session,
-          success: true,
-        });
-    
+    return res.json(session);
   } catch (error) {
     console.error("❌ Error creating Realtime token:", error);
-    if (error.name === 'OpenAIInvalidURLError') {
-      return res.status(502).json({
-        error: "Realtime feature not available for API key",
-        message: "OpenAI returned 'Invalid URL' for Realtime endpoint. Ensure your OpenAI API key/org has Realtime access or use a Realtime-enabled key.",
-        details: error.openai || null,
-        success: false
-      });
-    }
-
-    res.status(500).json({
+    return res.status(error.status || 500).json({
       error: "Failed to create Realtime token",
       message: error.message,
-      success: false
+      details: error.openai || null,
+      success: false,
     });
   }
 });
