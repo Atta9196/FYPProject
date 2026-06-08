@@ -335,18 +335,22 @@ export const readingPassageSets = [
 ];
 
 export const readingBandTable = [
-    { min: 39, band: "9" },
+    { min: 39, band: "9.0" },
     { min: 37, band: "8.5" },
-    { min: 35, band: "8" },
+    { min: 35, band: "8.0" },
     { min: 33, band: "7.5" },
-    { min: 30, band: "7" },
+    { min: 30, band: "7.0" },
     { min: 27, band: "6.5" },
-    { min: 23, band: "6" },
+    { min: 23, band: "6.0" },
     { min: 19, band: "5.5" },
-    { min: 15, band: "5" },
-    { min: 12, band: "4.5" },
-    { min: 9, band: "4" },
-    { min: 0, band: "3.5 or below" }
+    { min: 15, band: "5.0" },
+    { min: 13, band: "4.5" },
+    { min: 10, band: "4.0" },
+    { min: 8, band: "3.5" },
+    { min: 6, band: "3.0" },
+    { min: 4, band: "2.5" },
+    { min: 2, band: "2.0" },
+    { min: 0, band: "1.0" },
 ];
 
 export function getReadingSetById(setId) {

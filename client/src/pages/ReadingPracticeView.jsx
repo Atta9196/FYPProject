@@ -9,446 +9,307 @@ import {
     saveCachedGeneration,
 } from "../services/api/generationCacheApi";
 import {
-    getRandomReadingSet,
-    readingBandTable,
-    readingPassageSets
-} from "../data/readingPassages";
+    TIMER_SECONDS,
+    PASSAGE_ORDER,
+    QUESTION_TYPE_LABELS,
+} from "../features/reading/readingConstants";
+import { scoreReadingObjective, getQuestionsForPassage } from "../features/reading/readingScoring";
+import {
+    loadReadingSession,
+    saveReadingSession,
+    clearReadingSession,
+} from "../features/reading/readingSessionStorage";
 
-const TIMER_SECONDS = 60 * 60;
-const HIGHLIGHT_LIMIT = 20;
-
-const questionTypeLabels = {
-    multiple: "Multiple Choice",
-    "true-false-ng": "True / False / Not Given",
-    "yes-no-ng": "Yes / No / Not Given",
-    "match-heading": "Match Heading",
-    "matching-info": "Matching Information",
-    "sentence-completion": "Sentence Completion",
-    "summary-completion": "Summary Completion",
-    "short-answer": "Short Answer"
-};
+const API_BASE_URL =
+    import.meta.env?.VITE_API_BASE_URL || "https://ielts-coach-backend.onrender.com";
 
 function getStorageKey(userId) {
-    return getStorageKeyForModule('reading', userId) || "ielts-reading-history";
+    return getStorageKeyForModule("reading", userId) || "ielts-reading-history";
 }
 
 function loadHistory(userId) {
     if (typeof window === "undefined") return [];
     try {
-        const key = getStorageKey(userId);
-        const raw = window.localStorage.getItem(key);
+        const raw = window.localStorage.getItem(getStorageKey(userId));
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-        console.warn("Failed to parse reading history", error);
+    } catch {
         return [];
     }
 }
 
 function saveHistory(entries, userId) {
     if (typeof window === "undefined") return;
-    const key = getStorageKey(userId);
-    window.localStorage.setItem(key, JSON.stringify(entries));
+    window.localStorage.setItem(getStorageKey(userId), JSON.stringify(entries));
 }
 
-const normalizeAnswer = (value = "") =>
-    value
-        .toString()
-        .trim()
-        .replace(/[“”‘’]/g, "")
-        .replace(/[.,!?]/g, "")
-        .replace(/\s+/g, " ")
-        .toLowerCase();
-
-const wordCount = (value = "") =>
-    value
-        .toString()
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean).length;
-
-function standardizeChoice(value = "") {
-    const normalized = normalizeAnswer(value);
-    if (["t", "true"].includes(normalized)) return "true";
-    if (["f", "false"].includes(normalized)) return "false";
-    if (["notgiven", "not given", "ng"].includes(normalized)) return "not given";
-    if (["y", "yes"].includes(normalized)) return "yes";
-    if (["n", "no"].includes(normalized)) return "no";
-    return normalized;
+function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function calculateBand(score) {
-    const bandEntry = readingBandTable.find((entry) => score >= entry.min);
-    return bandEntry ? bandEntry.band : "N/A";
-}
-
-function evaluateMultiple(question, rawAnswer) {
-    const userAnswer = rawAnswer ? rawAnswer.toString().trim().toUpperCase() : "";
-    const correct = question.answer?.toString().trim().toUpperCase();
-    const isCorrect = userAnswer === correct;
-    const selectedOption = question.options?.find((option) => option.value === correct);
-    return {
-        isCorrect,
-        message: isCorrect ? "Correct" : "Incorrect option selected.",
-        userAnswer,
-        correctAnswer: selectedOption ? `${selectedOption.value}. ${selectedOption.label}` : correct || "",
-        explanation: question.explanation || ""
-    };
-}
-
-function evaluateTrueFalse(question, rawAnswer) {
-    const userAnswer = standardizeChoice(rawAnswer);
-    if (!userAnswer) {
-        return {
-            isCorrect: false,
-            message: "No answer provided.",
-            userAnswer: "",
-            correctAnswer: question.answer,
-            explanation: question.explanation || ""
-        };
-    }
-    const correctAnswer = standardizeChoice(question.answer);
-    const isCorrect = userAnswer === correctAnswer;
-    return {
-        isCorrect,
-        message: isCorrect ? "Correct" : "Check the statement against the passage.",
-        userAnswer,
-        correctAnswer,
-        explanation: question.explanation || ""
-    };
-}
-
-function evaluateMatching(question, rawAnswer) {
-    const userAnswer = rawAnswer ? rawAnswer.toString().trim().toUpperCase() : "";
-    const correctAnswer = question.answer?.toString().trim().toUpperCase();
-    const isCorrect = userAnswer === correctAnswer;
-    let correctLabel = correctAnswer;
-    const optionsList = question.options || [];
-    const option = optionsList.find((item) => item.value.toString().toUpperCase() === correctAnswer);
-    if (option) {
-        correctLabel = `${option.value}. ${option.label}`;
-    }
-    return {
-        isCorrect,
-        message: isCorrect ? "Correct" : "Incorrect match.",
-        userAnswer,
-        correctAnswer: correctLabel,
-        explanation: question.explanation || ""
-    };
-}
-
-function evaluateFill(question, rawAnswer) {
-    const userAnswer = rawAnswer ? rawAnswer.toString().trim() : "";
-    if (!userAnswer) {
-        return {
-            isCorrect: false,
-            message: "No answer provided.",
-            userAnswer: "",
-            correctAnswer: Array.isArray(question.answer) ? question.answer[0] : question.answer,
-            explanation: question.explanation || ""
-        };
-    }
-
-    if (question.maxWords && wordCount(userAnswer) > question.maxWords) {
-        return {
-            isCorrect: false,
-            message: `Exceeded word limit (maximum ${question.maxWords} word${question.maxWords > 1 ? "s" : ""}).`,
-            userAnswer,
-            correctAnswer: Array.isArray(question.answer) ? question.answer[0] : question.answer,
-            explanation: question.explanation || ""
-        };
-    }
-
-    const normalizedUser = normalizeAnswer(userAnswer);
-    const acceptableAnswers = Array.isArray(question.answer) ? question.answer : [question.answer];
-    const isCorrect = acceptableAnswers.some((acceptable) => normalizeAnswer(acceptable) === normalizedUser);
-
-    return {
-        isCorrect,
-        message: isCorrect ? "Correct" : "The wording does not match exactly.",
-        userAnswer,
-        correctAnswer: acceptableAnswers.join(" / "),
-        explanation: question.explanation || ""
-    };
-}
-
-function evaluateQuestion(question, answers) {
-    switch (question.type) {
-        case "multiple":
-            return evaluateMultiple(question, answers[question.id]);
-        case "true-false-ng":
-        case "yes-no-ng":
-            return evaluateTrueFalse(question, answers[question.id]);
-        case "match-heading":
-        case "matching-info":
-            return evaluateMatching(question, answers[question.id]);
-        case "sentence-completion":
-        case "short-answer":
-            return evaluateFill(question, answers[question.id]);
-        case "summary-completion": {
-            const results = {};
-            let correct = 0;
-            question.parts?.forEach((part) => {
-                const partResult = evaluateFill(part, answers[part.id]);
-                results[part.id] = partResult;
-                if (partResult.isCorrect) {
-                    correct += 1;
-                }
-            });
-            return { results, correctCount: correct };
-        }
-        default:
-            return {
-                isCorrect: false,
-                message: "Unsupported question type.",
-                userAnswer: answers[question.id] || "",
-                correctAnswer: Array.isArray(question.answer) ? question.answer[0] : question.answer
-            };
-    }
-}
-
-function evaluateReadingSet(readingSet, answers) {
-    let correctCount = 0;
-    let totalQuestions = 0;
-    const questionFeedback = {};
-
-    readingSet.questions.forEach((question) => {
-        if (question.type === "summary-completion") {
-            const result = evaluateQuestion(question, answers);
-            question.parts?.forEach((part) => {
-                const partFeedback = result.results?.[part.id] || {
-                    isCorrect: false,
-                    message: "No answer provided.",
-                    userAnswer: "",
-                    correctAnswer: Array.isArray(part.answer) ? part.answer[0] : part.answer,
-                    explanation: part.explanation || ""
-                };
-                questionFeedback[part.id] = {
-                    ...partFeedback,
-                    prompt: `${question.prompt} (${part.label})`
-                };
-                totalQuestions += 1;
-                if (partFeedback.isCorrect) {
-                    correctCount += 1;
-                }
-            });
-        } else {
-            const feedback = evaluateQuestion(question, answers);
-            questionFeedback[question.id] = feedback;
-            totalQuestions += 1;
-            if (feedback.isCorrect) {
-                correctCount += 1;
-            }
-        }
-    });
-
-    const scaledScore = Math.round((correctCount / totalQuestions) * 40);
-    const band = calculateBand(scaledScore);
-
-    return {
-        correctCount,
-        totalQuestions,
-        scaledScore,
-        band,
-        questionFeedback
-    };
-}
-
-function TimerDisplay({ status, remaining }) {
-    const minutes = Math.floor(remaining / 60);
-    const seconds = remaining % 60;
+function TimerBar({ remaining, status }) {
+    const pct = Math.round((remaining / TIMER_SECONDS) * 100);
+    const urgent = remaining <= 300;
     return (
-        <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700">
-            <span>{status === "running" ? "🟢 In Progress" : status === "completed" ? "✅ Completed" : "🟠 Ready"}</span>
-            <span>•</span>
-            <span>
-                {minutes}:{seconds.toString().padStart(2, "0")}
-            </span>
+        <div className={`sticky top-0 z-30 border-b ${urgent ? "border-rose-300 bg-rose-50" : "border-amber-200 bg-white/95"} backdrop-blur px-4 py-3 shadow-sm`}>
+            <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">IELTS Academic Reading</p>
+                    <p className="text-sm font-semibold text-slate-800">60 minutes · 40 questions · 3 passages</p>
+                </div>
+                <div className={`text-2xl font-mono font-bold ${urgent ? "text-rose-700" : "text-amber-700"}`}>
+                    {formatTime(remaining)}
+                </div>
+                <div className="w-full sm:w-48 h-2 rounded-full bg-slate-200 overflow-hidden">
+                    <div
+                        className={`h-full transition-all ${urgent ? "bg-rose-500" : "bg-amber-500"}`}
+                        style={{ width: `${pct}%` }}
+                    />
+                </div>
+                <span className="text-xs font-medium text-slate-600">
+                    {status === "running" ? "In progress" : status === "completed" ? "Completed" : "Ready"}
+                </span>
+            </div>
         </div>
     );
 }
 
-function HighlightList({ highlights, onUpdateNote, onRemove }) {
-    if (highlights.length === 0) {
+function QuestionField({ question, passage, answers, onChange, disabled, feedback }) {
+    const options =
+        question.type === "match-heading" && passage?.headingOptions?.length
+            ? passage.headingOptions
+            : question.type === "matching-features" && passage?.featureOptions?.length
+            ? passage.featureOptions
+            : question.options || [];
+
+    const choiceTypes = [
+        "multiple",
+        "match-heading",
+        "matching-info",
+        "matching-features",
+        "true-false-ng",
+        "yes-no-ng",
+    ];
+
+    if (question.type === "summary-completion" && question.parts?.length) {
         return (
-            <p className="text-xs text-slate-500">
-                Select text inside the passage and click “Add Highlight” to track key ideas. You can annotate each highlight with a note.
-            </p>
+            <div className="space-y-4">
+                <p className="text-sm text-slate-700">{question.prompt}</p>
+                {question.instructions && (
+                    <p className="text-xs font-medium text-amber-700">{question.instructions}</p>
+                )}
+                {question.parts.map((part) => (
+                    <div key={part.id} className="space-y-1">
+                        <label className="text-sm font-semibold text-slate-800">
+                            {part.number}. {part.prompt}
+                        </label>
+                        <input
+                            type="text"
+                            value={answers[part.id] ?? ""}
+                            onChange={(e) => onChange(part.id, e.target.value)}
+                            disabled={disabled}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-amber-500 focus:ring-amber-500 disabled:bg-slate-100"
+                            placeholder={part.maxWords ? `Max ${part.maxWords} word(s)` : "Your answer"}
+                        />
+                        {feedback?.[part.id] && (
+                            <ReviewLine feedback={feedback[part.id]} />
+                        )}
+                    </div>
+                ))}
+            </div>
         );
     }
 
+    const fb = feedback?.[question.id];
+
     return (
-        <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-            {highlights.map((highlight) => (
-                <div key={highlight.id} className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-2">
-                    <p className="text-xs font-semibold text-amber-700 leading-snug">“{highlight.text}”</p>
-                    <textarea
-                        value={highlight.note}
-                        onChange={(event) => onUpdateNote(highlight.id, event.target.value)}
-                        placeholder="Add note (optional)"
-                        className="w-full rounded-lg border border-amber-200 bg-white/90 px-2 py-1 text-xs text-slate-700 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
-                    />
-                    <div className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span>{new Date(highlight.createdAt).toLocaleTimeString()}</span>
-                        <button
-                            type="button"
-                            onClick={() => onRemove(highlight.id)}
-                            className="text-amber-700 hover:underline"
+        <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-800">
+                {question.number}. {question.prompt}
+            </p>
+            {question.instructions && (
+                <p className="text-xs font-medium text-amber-700">{question.instructions}</p>
+            )}
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                {QUESTION_TYPE_LABELS[question.type] || question.type}
+            </p>
+
+            {choiceTypes.includes(question.type) ? (
+                <div className="space-y-2">
+                    {(question.type === "true-false-ng"
+                        ? [
+                              { value: "true", label: "TRUE" },
+                              { value: "false", label: "FALSE" },
+                              { value: "not given", label: "NOT GIVEN" },
+                          ]
+                        : question.type === "yes-no-ng"
+                        ? [
+                              { value: "yes", label: "YES" },
+                              { value: "no", label: "NO" },
+                              { value: "not given", label: "NOT GIVEN" },
+                          ]
+                        : options
+                    ).map((opt) => (
+                        <label
+                            key={opt.value}
+                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm cursor-pointer ${
+                                answers[question.id] === opt.value
+                                    ? "border-amber-400 bg-amber-50"
+                                    : "border-slate-200 hover:bg-slate-50"
+                            } ${disabled ? "opacity-70 cursor-not-allowed" : ""}`}
                         >
-                            Remove
-                        </button>
-                    </div>
+                            <input
+                                type="radio"
+                                name={question.id}
+                                value={opt.value}
+                                checked={answers[question.id] === opt.value}
+                                onChange={(e) => onChange(question.id, e.target.value)}
+                                disabled={disabled}
+                                className="text-amber-600"
+                            />
+                            <span className="font-semibold text-slate-700">{opt.value}.</span>
+                            <span className="text-slate-600">{opt.label}</span>
+                        </label>
+                    ))}
                 </div>
-            ))}
+            ) : (
+                <input
+                    type="text"
+                    value={answers[question.id] ?? ""}
+                    onChange={(e) => onChange(question.id, e.target.value)}
+                    disabled={disabled}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-amber-500 focus:ring-amber-500 disabled:bg-slate-100"
+                    placeholder={question.maxWords ? `Max ${question.maxWords} word(s)` : "Your answer"}
+                />
+            )}
+            {fb && <ReviewLine feedback={fb} />}
+        </div>
+    );
+}
+
+function ReviewLine({ feedback }) {
+    return (
+        <div
+            className={`rounded-lg border px-3 py-2 text-xs ${
+                feedback.isCorrect
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-rose-200 bg-rose-50 text-rose-800"
+            }`}
+        >
+            <p className="font-semibold">{feedback.isCorrect ? "Correct" : "Incorrect"}</p>
+            <p>Your answer: {feedback.userAnswer || "—"}</p>
+            <p>Correct answer: {feedback.correctAnswer}</p>
+            {feedback.reference && <p className="mt-1 italic">Reference: “{feedback.reference}”</p>}
+            {feedback.explanation && <p className="mt-1">{feedback.explanation}</p>}
         </div>
     );
 }
 
 export function ReadingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
-    const [availableSets, setAvailableSets] = useState([]);
+    const userId = user?.email || user?.id || null;
+
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
-    const [selectedSetId, setSelectedSetId] = useState(null);
     const [activeSet, setActiveSet] = useState(null);
-    const [mode, setMode] = useState("practice"); // practice | exam
-    const [timerStatus, setTimerStatus] = useState("idle"); // idle | running | completed | timesup
-    const [timeRemaining, setTimeRemaining] = useState(TIMER_SECONDS);
+    const [activePassageId, setActivePassageId] = useState("passage-1");
     const [answers, setAnswers] = useState({});
+    const [timerStatus, setTimerStatus] = useState("idle");
+    const [timeRemaining, setTimeRemaining] = useState(TIMER_SECONDS);
+    const [timeSpentSec, setTimeSpentSec] = useState(0);
     const [submitted, setSubmitted] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [results, setResults] = useState(null);
     const [errorMessage, setErrorMessage] = useState(null);
-    const [history, setHistory] = useState(() => {
-        const userId = user?.email || user?.id || null;
-        return loadHistory(userId);
-    });
-    const [highlights, setHighlights] = useState([]);
-    const [highlightError, setHighlightError] = useState(null);
-    const [showDetailedResults, setShowDetailedResults] = useState(true);
+    const [history, setHistory] = useState(() => loadHistory(userId));
+    const [view, setView] = useState("exam");
 
-    const passageRef = useRef(null);
+    const timerStartedRef = useRef(null);
 
-    // Reload history when user changes
     useEffect(() => {
-        const userId = user?.email || user?.id || null;
-        const userHistory = loadHistory(userId);
-        setHistory(userHistory);
-    }, [user]);
+        setHistory(loadHistory(userId));
+    }, [userId]);
 
-    // Apply a payload (from cache or fresh generation) to component state.
-    const applyReadingSet = useCallback((readingSet) => {
-        setAvailableSets([readingSet]);
-        setSelectedSetId(readingSet.id);
-        setActiveSet(readingSet);
-        setTimerStatus("idle");
-        setTimeRemaining(TIMER_SECONDS);
-        setAnswers({});
-        setSubmitted(false);
-        setSubmitting(false);
-        setResults(null);
-        setHighlights([]);
-        if (embedded && typeof onReady === "function") onReady();
-    }, [embedded, onReady]);
-
-    /**
-     * Cache-first loader:
-     *   force=false → use cached reading set if present, otherwise generate
-     *                 fresh and cache it
-     *   force=true  → ignore cache, regenerate, overwrite cache (Regenerate)
-     * On OpenAI failure, falls back to the existing cached set so the user is
-     * never left with a blank screen.
-     */
-    const loadAIGeneratedReading = useCallback(async ({ force = false } = {}) => {
-        try {
-            setGenerating(true);
+    const applyReadingSet = useCallback(
+        (readingSet, restoreSession = null) => {
+            setActiveSet(readingSet);
+            setActivePassageId(restoreSession?.activePassageId || "passage-1");
+            setAnswers(restoreSession?.answers || {});
+            setTimeRemaining(restoreSession?.timeRemaining ?? TIMER_SECONDS);
+            setTimeSpentSec(restoreSession?.timeSpentSec || 0);
+            setTimerStatus(restoreSession?.timerStatus || "idle");
+            setSubmitted(false);
+            setSubmitting(false);
+            setResults(null);
+            setView("exam");
             setErrorMessage(null);
+            timerStartedRef.current = restoreSession?.timerStartedAt || null;
+            if (embedded && typeof onReady === "function") onReady();
+        },
+        [embedded, onReady]
+    );
 
-            if (!force) {
-                const cached = await getCachedGeneration("reading");
-                if (cached?.readingSet) {
-                    applyReadingSet(cached.readingSet);
-                    return;
+    const loadAIGeneratedReading = useCallback(
+        async ({ force = false } = {}) => {
+            try {
+                setGenerating(true);
+                setErrorMessage(null);
+
+                if (!force) {
+                    const cached = await getCachedGeneration("reading");
+                    if (cached?.readingSet) {
+                        const session = loadReadingSession(userId);
+                        const restore =
+                            session?.setId === cached.readingSet.id ? session : null;
+                        applyReadingSet(cached.readingSet, restore);
+                        return;
+                    }
+                } else {
+                    await clearCachedGeneration("reading");
+                    clearReadingSession(userId);
                 }
-            } else {
-                // best-effort clear; we'll overwrite right after generation
-                await clearCachedGeneration("reading");
-            }
 
-            const response = await fetch(
-                "https://ielts-coach-backend.onrender.com/api/reading/generate"
-            );
-            const data = await response.json();
+                const response = await fetch(`${API_BASE_URL}/api/reading/generate`);
+                const data = await response.json();
 
-            if (data.success && data.readingSet) {
-                applyReadingSet(data.readingSet);
-                // Persist for the next visit. Silent on failure.
-                saveCachedGeneration("reading", { readingSet: data.readingSet });
-            } else {
-                throw new Error(data.error || "Failed to generate reading test");
-            }
-        } catch (error) {
-            console.error("Error loading AI reading test:", error);
-            // If we're regenerating and it failed, try to fall back to
-            // existing cached content so the user isn't blocked.
-            if (force) {
-                try {
+                if (data.success && data.readingSet) {
+                    applyReadingSet(data.readingSet);
+                    saveCachedGeneration("reading", { readingSet: data.readingSet });
+                } else {
+                    throw new Error(data.error || "Failed to generate reading test");
+                }
+            } catch (error) {
+                console.error("Reading generation error:", error);
+                if (force) {
                     const fallback = await getCachedGeneration("reading");
                     if (fallback?.readingSet) {
                         applyReadingSet(fallback.readingSet);
-                        setErrorMessage(
-                            "Couldn't generate a new test. Restored your previous one."
-                        );
+                        setErrorMessage("Could not generate a new test. Showing your previous test.");
                         return;
                     }
-                } catch {}
+                }
+                setErrorMessage("Failed to generate reading test. Please try again.");
+            } finally {
+                setGenerating(false);
+                setLoading(false);
             }
-            setErrorMessage("Failed to generate reading test. Please try again.");
-        } finally {
-            setGenerating(false);
-            setLoading(false);
-        }
-    }, [applyReadingSet]);
+        },
+        [applyReadingSet, userId]
+    );
 
-    // Load initial reading test on mount (cache-first).
     useEffect(() => {
         loadAIGeneratedReading();
     }, [loadAIGeneratedReading]);
 
+    // Timer tick
     useEffect(() => {
-        if (availableSets.length === 0) {
-            return;
-        }
-
-        if (!selectedSetId && availableSets.length > 0) {
-            const firstSet = availableSets[0];
-            setSelectedSetId(firstSet.id);
-            setActiveSet(firstSet);
-            return;
-        }
-
-        const found = availableSets.find((set) => set.id === selectedSetId);
-        if (found) {
-            setActiveSet(found);
-        } else if (availableSets.length > 0) {
-            const firstSet = availableSets[0];
-            setSelectedSetId(firstSet.id);
-            setActiveSet(firstSet);
-        }
-    }, [availableSets, selectedSetId]);
-
-    useEffect(() => {
-        if (timerStatus !== "running") {
-            return;
-        }
+        if (timerStatus !== "running") return;
         const interval = setInterval(() => {
-            setTimeRemaining((prev) => {
-                if (prev <= 1) {
-                    return 0;
-                }
-                return prev - 1;
-            });
+            setTimeRemaining((prev) => Math.max(0, prev - 1));
+            setTimeSpentSec((prev) => prev + 1);
         }, 1000);
         return () => clearInterval(interval);
     }, [timerStatus]);
@@ -459,155 +320,100 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
         }
     }, [timerStatus, timeRemaining]);
 
+    // Persist session while exam in progress
     useEffect(() => {
-        setShowDetailedResults(mode === "practice");
-    }, [mode]);
-
-    const handleSelectSet = useCallback(
-        (setId) => {
-            if (!setId) return;
-            setSelectedSetId(setId);
-            const selected = availableSets.find((set) => set.id === setId);
-            if (selected) {
-                setActiveSet(selected);
-            }
-            setTimerStatus("idle");
-            setTimeRemaining(TIMER_SECONDS);
-            setAnswers({});
-            setSubmitted(false);
-            setSubmitting(false);
-            setResults(null);
-            setErrorMessage(null);
-            setHighlights([]);
-        },
-        [availableSets]
-    );
-
-    const handleGenerateNew = useCallback(() => {
-        loadAIGeneratedReading({ force: true });
-    }, [loadAIGeneratedReading]);
-
-    const handleModeChange = useCallback((value) => {
-        setMode(value);
-    }, []);
-
-    const handleStartTest = useCallback(() => {
-        // Only start timer if test is loaded and not already running
-        if (timerStatus === "running") return;
-        if (!activeSet) return;
-        setTimerStatus("running");
-        setTimeRemaining(TIMER_SECONDS);
-        setSubmitted(false);
-        setSubmitting(false);
-        setResults(null);
-        setErrorMessage(null);
-    }, [timerStatus, activeSet]);
-
-    const handleAnswerChange = useCallback((questionId, value) => {
-        setAnswers((prev) => ({
-            ...prev,
-            [questionId]: value
-        }));
-    }, []);
-
-    const persistHistory = useCallback((entry) => {
-        const userId = user?.email || user?.id || null;
-        setHistory((prev) => {
-            const next = [entry, ...prev].slice(0, 20);
-            saveHistory(next, userId);
-            // Dispatch event to update dashboards in real-time
-            window.dispatchEvent(new Event('progressUpdated'));
-            return next;
+        if (!activeSet || submitted) return;
+        saveReadingSession(userId, {
+            setId: activeSet.id,
+            answers,
+            activePassageId,
+            timeRemaining,
+            timeSpentSec,
+            timerStatus,
+            timerStartedAt: timerStartedRef.current,
         });
-    }, [user]);
+    }, [activeSet, answers, activePassageId, timeRemaining, timeSpentSec, timerStatus, submitted, userId]);
+
+    const handleStart = () => {
+        if (!activeSet || timerStatus === "running") return;
+        setTimerStatus("running");
+        timerStartedRef.current = Date.now();
+    };
+
+    const handleAnswerChange = (questionId, value) => {
+        setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    };
+
+    const persistHistory = useCallback(
+        (entry) => {
+            setHistory((prev) => {
+                const next = [entry, ...prev].slice(0, 20);
+                saveHistory(next, userId);
+                window.dispatchEvent(new Event("progressUpdated"));
+                return next;
+            });
+        },
+        [userId]
+    );
 
     const handleSubmit = useCallback(
         async (auto = false) => {
-            if (submitted || submitting) return;
+            if (submitted || submitting || !activeSet) return;
             setSubmitting(true);
             setErrorMessage(null);
 
             try {
-                if (!activeSet) {
-                    throw new Error("No reading set selected.");
-                }
+                const spent = TIMER_SECONDS - timeRemaining;
+                let evaluation = scoreReadingObjective(activeSet, answers);
 
-                // Always compute the local evaluation first so we have an
-                // instant offline baseline and a guaranteed fallback if the
-                // server-side AI-assisted scoring is unreachable.
-                const localEvaluation = evaluateReadingSet(activeSet, answers);
-                let finalEvaluation = localEvaluation;
-
-                // Prefer server-side scoring: it uses the same answer-based
-                // logic PLUS an AI semantic-match pass on fill answers
-                // (e.g. "public transport" ≈ "public transportation") plus a
-                // strengths / weaknesses / suggestions explanation block.
                 try {
-                    const apiBase =
-                        import.meta.env?.VITE_API_BASE_URL ||
-                        "https://ielts-coach-backend.onrender.com";
-                    const response = await fetch(`${apiBase}/api/reading/score`, {
+                    const response = await fetch(`${API_BASE_URL}/api/reading/score`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ readingSet: activeSet, answers }),
+                        body: JSON.stringify({
+                            readingSet: activeSet,
+                            answers,
+                            timeSpentSec: spent,
+                        }),
                     });
                     if (response.ok) {
-                        const serverResult = await response.json();
-                        if (serverResult?.success) {
-                            // Merge server output into the shape the rest of
-                            // the page already renders (questionFeedback,
-                            // correctCount, band, etc.) without changing UI.
-                            finalEvaluation = {
-                                ...localEvaluation,
-                                correctCount: serverResult.correctCount ?? localEvaluation.correctCount,
-                                partialCount: serverResult.partialCount ?? 0,
-                                wrongCount: serverResult.wrongCount ?? localEvaluation.totalQuestions - serverResult.correctCount,
-                                totalQuestions: serverResult.totalQuestions ?? localEvaluation.totalQuestions,
-                                scaledScore: serverResult.rawScore ?? localEvaluation.scaledScore,
-                                accuracyPercent: serverResult.accuracyPercent,
-                                band: String(serverResult.band ?? localEvaluation.band),
-                                questionFeedback: serverResult.questionFeedback || localEvaluation.questionFeedback,
-                                summary: serverResult.summary || null,
-                                source: "server",
-                            };
-                        }
+                        const server = await response.json();
+                        if (server?.success) evaluation = { ...evaluation, ...server };
                     }
-                } catch (serverError) {
-                    console.warn("Server-side reading scoring unavailable, using local fallback:", serverError.message);
+                } catch (err) {
+                    console.warn("Server scoring unavailable, using local scoring", err);
                 }
 
-                setResults({
-                    ...finalEvaluation,
-                    autoSubmitted: auto,
-                    mode,
-                });
+                setResults({ ...evaluation, autoSubmitted: auto, timeSpentSec: spent });
                 setSubmitted(true);
                 setTimerStatus("completed");
+                setView("results");
+                clearReadingSession(userId);
 
                 persistHistory({
                     id: Date.now(),
                     setId: activeSet.id,
                     title: activeSet.title,
-                    mode,
-                    correctCount: finalEvaluation.correctCount,
-                    totalQuestions: finalEvaluation.totalQuestions,
-                    scaledScore: finalEvaluation.scaledScore,
-                    band: finalEvaluation.band,
-                    bandScore: typeof finalEvaluation.band === "string"
-                        ? parseFloat(finalEvaluation.band) || 0
-                        : finalEvaluation.band,
+                    correctCount: evaluation.correctCount,
+                    wrongCount: evaluation.wrongCount,
+                    totalQuestions: evaluation.totalQuestions,
+                    band: evaluation.band,
+                    bandScore: evaluation.band,
+                    accuracyPercent: evaluation.accuracyPercent,
+                    timeSpentSec: spent,
+                    weakQuestionTypes: evaluation.weakQuestionTypes || [],
+                    strongQuestionTypes: evaluation.strongQuestionTypes || [],
                     submittedAt: new Date().toISOString(),
                     autoSubmitted: auto,
-                    timeRemaining,
                 });
-            } catch (error) {
-                console.error("Failed to evaluate reading set", error);
-                setErrorMessage("Unable to evaluate answers right now. Please try again.");
+            } catch (err) {
+                console.error(err);
+                setErrorMessage("Unable to score your test. Please try again.");
             } finally {
                 setSubmitting(false);
             }
         },
-        [submitted, submitting, activeSet, answers, mode, persistHistory, timeRemaining]
+        [submitted, submitting, activeSet, answers, timeRemaining, userId, persistHistory]
     );
 
     useEffect(() => {
@@ -616,510 +422,340 @@ export function ReadingPracticeView({ embedded = false, onReady }) {
         }
     }, [timerStatus, submitted, submitting, handleSubmit]);
 
-    const handleAddHighlight = useCallback(() => {
-        setHighlightError(null);
-        if (!passageRef.current) return;
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) {
-            setHighlightError("Select text within the passage first.");
-            return;
-        }
-        const text = selection.toString().trim();
-        if (!text) {
-            setHighlightError("Select a portion of text to highlight.");
-            return;
-        }
-        const range = selection.getRangeAt(0);
-        if (!passageRef.current.contains(range.commonAncestorContainer)) {
-            setHighlightError("Highlights must be created from the passage content.");
-            return;
-        }
-        if (highlights.length >= HIGHLIGHT_LIMIT) {
-            setHighlightError("Highlight limit reached. Remove an existing highlight to add more.");
-            return;
-        }
-        const highlight = {
-            id: `highlight_${Date.now()}`,
-            text,
-            note: "",
-            createdAt: Date.now()
-        };
-        setHighlights((prev) => [highlight, ...prev]);
-        selection.removeAllRanges();
-    }, [highlights.length]);
+    const activePassage = useMemo(
+        () => activeSet?.passages?.find((p) => p.id === activePassageId),
+        [activeSet, activePassageId]
+    );
 
-    const handleUpdateHighlightNote = useCallback((highlightId, note) => {
-        setHighlights((prev) =>
-            prev.map((highlight) => (highlight.id === highlightId ? { ...highlight, note } : highlight))
-        );
-    }, []);
+    const passageQuestions = useMemo(
+        () => (activeSet ? getQuestionsForPassage(activeSet, activePassageId) : []),
+        [activeSet, activePassageId]
+    );
 
-    const handleRemoveHighlight = useCallback((highlightId) => {
-        setHighlights((prev) => prev.filter((highlight) => highlight.id !== highlightId));
-    }, []);
+    const passageIndex = PASSAGE_ORDER.indexOf(activePassageId);
 
-    const totalQuestions = useMemo(() => {
+    const answeredCount = useMemo(() => {
         if (!activeSet) return 0;
-        return activeSet.questions.reduce((count, question) => {
-            if (question.type === "summary-completion") {
-                return count + (question.parts?.length || 0);
-            }
-            return count + 1;
-        }, 0);
-    }, [activeSet]);
+        const evalPreview = scoreReadingObjective(activeSet, answers);
+        return Object.values(answers).filter((v) => String(v || "").trim()).length;
+    }, [activeSet, answers]);
 
-    const questionFeedback = results?.questionFeedback || {};
-
-    const renderOptions = (question) => {
-        if (!activeSet) return [];
-        if (question.type === "match-heading" && question.optionsSource) {
-            const passage = activeSet.passages.find((p) => p.id === question.optionsSource);
-            if (passage?.headingOptions) {
-                return passage.headingOptions;
-            }
-        }
-        return question.options || [];
-    };
-
-    // Ensure activeSet exists before rendering
     if (!activeSet) {
         const loadingContent = (
-            <div className="p-6 md:p-10 lg:p-12 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen flex items-center justify-center">
-                <Panel className="max-w-4xl mx-auto bg-white/90 backdrop-blur space-y-4 text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto mb-4"></div>
-                    <h1 className="text-3xl font-extrabold text-amber-700">Generating Reading Test</h1>
-                    <p className="text-slate-600 text-sm md:text-base">
-                        {generating ? "Creating AI-generated IELTS Reading test for you..." : "Loading..."}
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-amber-50 via-white to-yellow-50 p-6">
+                <Panel className="max-w-lg text-center space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto" />
+                    <h1 className="text-2xl font-bold text-amber-700">Generating Reading Test</h1>
+                    <p className="text-slate-600 text-sm">
+                        {generating
+                            ? "AI is building your official-format Academic Reading test (3 passages, 40 questions)..."
+                            : "Loading..."}
                     </p>
+                    {errorMessage && <p className="text-rose-600 text-sm">{errorMessage}</p>}
+                    <button
+                        type="button"
+                        onClick={() => loadAIGeneratedReading({ force: true })}
+                        className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700"
+                    >
+                        Retry Generation
+                    </button>
                 </Panel>
             </div>
         );
         return embedded ? loadingContent : <AppLayout>{loadingContent}</AppLayout>;
     }
 
-    const mainContent = (
-        <div className="space-y-8 p-4 md:p-6 lg:p-8 bg-gradient-to-br from-amber-50 via-white to-yellow-50 min-h-screen">
-            {!embedded && (
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h1 className="text-3xl md:text-4xl font-extrabold text-amber-700">Reading Practice</h1>
-                        <p className="text-slate-600 mt-2">
-                            Simulate IELTS Reading with a strict 60-minute timer, question variety, automatic scoring, and review tools.
-                        </p>
+    if (view === "results" && results) {
+        const reviewItems = results.items || scoreReadingObjective(activeSet, answers).items;
+        const feedback = results.questionFeedback || {};
+
+        const resultsContent = (
+            <div className="min-h-screen bg-gradient-to-br from-amber-50 via-white to-yellow-50 p-4 md:p-8">
+                <div className="max-w-5xl mx-auto space-y-6">
+                    <div className="text-center space-y-2">
+                        <h1 className="text-3xl font-extrabold text-amber-700">Reading Test Results</h1>
+                        <p className="text-slate-600">{activeSet.title}</p>
                     </div>
-                    <a
-                        href="/dashboard"
-                        className="self-start md:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                    >
-                        ← Back to Dashboard
-                    </a>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {[
+                            { label: "Correct", value: results.correctCount, tone: "emerald" },
+                            { label: "Incorrect", value: results.wrongCount, tone: "rose" },
+                            { label: "IELTS Band", value: results.band, tone: "amber" },
+                            { label: "Accuracy", value: `${results.accuracyPercent}%`, tone: "blue" },
+                            { label: "Time Used", value: formatTime(results.timeSpentSec || 0), tone: "slate" },
+                            { label: "Total Questions", value: results.totalQuestions, tone: "slate" },
+                        ].map((stat) => (
+                            <div
+                                key={stat.label}
+                                className="rounded-xl border border-slate-200 bg-white p-4 text-center shadow-sm"
+                            >
+                                <p className="text-xs uppercase text-slate-500">{stat.label}</p>
+                                <p className="text-2xl font-bold text-slate-800 mt-1">{stat.value}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    {(results.strongQuestionTypes?.length > 0 || results.weakQuestionTypes?.length > 0) && (
+                        <Panel title="Question Type Analysis" className="bg-white/90">
+                            <div className="grid md:grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <p className="font-semibold text-emerald-700 mb-2">Strong areas</p>
+                                    <ul className="list-disc pl-5 text-slate-700 space-y-1">
+                                        {(results.strongQuestionTypes || []).map((t) => (
+                                            <li key={t}>{QUESTION_TYPE_LABELS[t] || t}</li>
+                                        ))}
+                                        {!results.strongQuestionTypes?.length && <li>—</li>}
+                                    </ul>
+                                </div>
+                                <div>
+                                    <p className="font-semibold text-rose-700 mb-2">Weak areas</p>
+                                    <ul className="list-disc pl-5 text-slate-700 space-y-1">
+                                        {(results.weakQuestionTypes || []).map((t) => (
+                                            <li key={t}>{QUESTION_TYPE_LABELS[t] || t}</li>
+                                        ))}
+                                        {!results.weakQuestionTypes?.length && <li>—</li>}
+                                    </ul>
+                                </div>
+                            </div>
+                        </Panel>
+                    )}
+
+                    <Panel title="Question-by-Question Review" className="bg-white/90">
+                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                            {reviewItems.map((item) => {
+                                const fb = feedback[item.id];
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={`rounded-lg border p-4 ${
+                                            fb?.isCorrect
+                                                ? "border-emerald-200 bg-emerald-50/50"
+                                                : "border-rose-200 bg-rose-50/50"
+                                        }`}
+                                    >
+                                        <p className="text-sm font-semibold text-slate-800">
+                                            Q{item.number}. {item.prompt}
+                                        </p>
+                                        <p className="text-[10px] uppercase text-slate-400 mt-1">
+                                            {QUESTION_TYPE_LABELS[item.questionType] || item.questionType}
+                                        </p>
+                                        {fb && <ReviewLine feedback={fb} />}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </Panel>
+
+                    <div className="flex flex-wrap gap-3 justify-center">
+                        <button
+                            type="button"
+                            onClick={() => loadAIGeneratedReading({ force: true })}
+                            disabled={generating}
+                            className="px-5 py-2.5 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50"
+                        >
+                            {generating ? "Generating..." : "New AI Test"}
+                        </button>
+                        {!embedded && (
+                            <a
+                                href="/dashboard"
+                                className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50"
+                            >
+                                Back to Dashboard
+                            </a>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+        return embedded ? resultsContent : <AppLayout>{resultsContent}</AppLayout>;
+    }
+
+    const examContent = (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 via-white to-yellow-50 flex flex-col">
+            <TimerBar remaining={timeRemaining} status={timerStatus} />
+
+            {!embedded && (
+                <div className="px-4 py-3 max-w-[1600px] mx-auto w-full flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h1 className="text-xl font-bold text-amber-700">IELTS Academic Reading</h1>
+                        <p className="text-sm text-slate-600">{activeSet.title}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {timerStatus !== "running" && (
+                            <button
+                                type="button"
+                                onClick={handleStart}
+                                className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700"
+                            >
+                                Start 60-Minute Timer
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => loadAIGeneratedReading({ force: true })}
+                            disabled={generating || timerStatus === "running"}
+                            className="px-4 py-2 rounded-lg border border-amber-300 text-amber-700 text-sm font-semibold hover:bg-amber-50 disabled:opacity-50"
+                        >
+                            {generating ? "Generating..." : "New Test"}
+                        </button>
+                        {!embedded && (
+                            <a
+                                href="/dashboard"
+                                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 text-sm hover:bg-slate-50"
+                            >
+                                Dashboard
+                            </a>
+                        )}
+                    </div>
                 </div>
             )}
 
-                <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 max-w-7xl mx-auto">
-                    <Panel title="Test Controls" className="space-y-5 bg-white/80 backdrop-blur rounded-2xl shadow-md">
-                        <div className="space-y-2">
-                            <p className="text-xs uppercase tracking-wide text-slate-500">Select Set</p>
-                            <div className="space-y-2">
-                                {availableSets.map((set) => (
-                                    <button
-                                        key={set.id}
-                                        type="button"
-                                        onClick={() => handleSelectSet(set.id)}
-                                        className={`w-full text-left rounded-xl border px-4 py-3 text-sm transition-all ${
-                                            set.id === activeSet?.id
-                                                ? "border-amber-500 bg-amber-50 text-amber-700 shadow-sm"
-                                                : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                                        }`}
-                                    >
-                                        <span className="font-semibold">{set.title}</span>
-                                        <span className="block text-xs text-slate-500 mt-1">{set.description}</span>
-                                    </button>
-                                ))}
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleGenerateNew}
-                                disabled={generating}
-                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {generating ? "🔄 Generating..." : "✨ Generate New Test"}
-                            </button>
-                        </div>
+            {errorMessage && (
+                <div className="mx-4 max-w-[1600px] lg:mx-auto w-full rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+                    {errorMessage}
+                </div>
+            )}
 
-                        <div className="space-y-2">
-                            <p className="text-xs uppercase tracking-wide text-slate-500">Mode</p>
-                            <div className="flex gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => handleModeChange("practice")}
-                                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-all ${
-                                        mode === "practice"
-                                            ? "bg-emerald-600 text-white shadow-sm"
-                                            : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                    }`}
-                                >
-                                    Practice
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleModeChange("exam")}
-                                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-all ${
-                                        mode === "exam"
-                                            ? "bg-slate-800 text-white shadow-sm"
-                                            : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                                    }`}
-                                >
-                                    Exam
-                            </button>
-                            </div>
-                            <p className="text-xs text-slate-500">
-                                Practice mode unlocks explanations after submission. Exam mode hides feedback until you finish.
-                            </p>
-                        </div>
+            {/* Passage tabs */}
+            <div className="px-4 max-w-[1600px] mx-auto w-full flex gap-2 border-b border-slate-200 pb-0">
+                {PASSAGE_ORDER.map((pid, idx) => {
+                    const passage = activeSet.passages.find((p) => p.id === pid);
+                    return (
+                        <button
+                            key={pid}
+                            type="button"
+                            onClick={() => setActivePassageId(pid)}
+                            className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-colors ${
+                                activePassageId === pid
+                                    ? "border-amber-600 text-amber-700 bg-white"
+                                    : "border-transparent text-slate-500 hover:text-amber-600"
+                            }`}
+                        >
+                            {passage?.label || `Passage ${idx + 1}`}
+                        </button>
+                    );
+                })}
+                <span className="ml-auto self-center text-xs text-slate-500">
+                    {answeredCount} answers entered
+                </span>
+            </div>
 
-                        <div className="space-y-2">
-                            <p className="text-xs uppercase tracking-wide text-slate-500">Highlights & Notes</p>
-                            <HighlightList
-                                highlights={highlights}
-                                onUpdateNote={handleUpdateHighlightNote}
-                                onRemove={handleRemoveHighlight}
-                            />
-                            {highlightError ? (
-                                <p className="text-[11px] text-rose-600">{highlightError}</p>
-                            ) : null}
-                            <button
-                                type="button"
-                                onClick={handleAddHighlight}
-                                className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-                            >
-                                ✏️ Add Highlight
-                            </button>
-                        </div>
-
-                        <div className="space-y-2">
-                            <p className="text-xs uppercase tracking-wide text-slate-500">Timing Guidance</p>
-                            <ul className="space-y-1 text-xs text-slate-500">
-                                <li>• Total time: 60 minutes</li>
-                                <li>• No extra transfer time — answers lock at 00:00</li>
-                                <li>• Each question is worth one mark</li>
-                                <li>• Aim for ~20 minutes per passage</li>
-                            </ul>
-                        </div>
-                    </Panel>
-
-                    <Panel
-                        title={activeSet.title}
-                        className="xl:col-span-3 space-y-6 bg-white/85 backdrop-blur rounded-2xl shadow-md"
-                    >
-                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                            <TimerDisplay status={timerStatus} remaining={timeRemaining} />
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    type="button"
-                                    onClick={handleStartTest}
-                                    disabled={timerStatus === "running"}
-                                    className={`rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
-                                        timerStatus === "running"
-                                            ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                                            : "bg-amber-600 text-white hover:bg-amber-700 shadow-sm"
-                                    }`}
-                                >
-                                    {timerStatus === "running" ? "Timer Running" : "Start 60-minute Timer"}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleSelectSet(activeSet.id)}
-                                    className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                                >
-                                    Reset Attempt
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowDetailedResults((prev) => !prev)}
-                                    disabled={!results || mode === "practice"}
-                                    className={`rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
-                                        !results || mode === "practice"
-                                            ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                                            : showDetailedResults
-                                            ? "bg-slate-800 text-white hover:bg-slate-900"
-                                            : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                                    }`}
-                                >
-                                    {showDetailedResults ? "Hide Review" : "Reveal Answers"}
-                                </button>
-                            </div>
-                        </div>
-
-                        {errorMessage ? (
-                            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                                {errorMessage}
-                            </div>
-                        ) : null}
-
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div ref={passageRef} className="space-y-6 rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
-                                {activeSet.passages.map((passage) => (
-                                    <div key={passage.id} className="space-y-3">
-                                        <div>
-                                            <p className="text-xs uppercase tracking-wide text-amber-600">{passage.label}</p>
-                                            <h3 className="text-lg font-semibold text-amber-800">{passage.title}</h3>
-                                        </div>
-                                        <div className="space-y-2 text-sm leading-relaxed text-slate-700">
-                                            {passage.paragraphs.map((paragraph) => (
-                                                <p key={paragraph.id}>
-                                                    <span className="font-semibold text-amber-700">{paragraph.id}</span> {paragraph.text}
-                                                </p>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="space-y-5 rounded-2xl border border-slate-200 bg-white/80 p-5">
-                                <p className="text-xs uppercase tracking-wide text-slate-500">
-                                    Questions ({totalQuestions} items)
+            {/* Split exam layout */}
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-0 max-w-[1600px] mx-auto w-full min-h-0">
+                {/* Left: Passage */}
+                <div className="border-r border-slate-200 bg-amber-50/40 overflow-y-auto max-h-[calc(100vh-220px)] p-5">
+                    {activePassage && (
+                        <div className="space-y-4">
+                            <div>
+                                <p className="text-xs uppercase tracking-wide text-amber-600">
+                                    {activePassage.label}
                                 </p>
-                                <div className="space-y-4">
-                                    {activeSet.questions.map((question, index) => {
-                                        if (question.type === "summary-completion") {
-                                            return (
-                                                <div key={question.id} className="rounded-xl border border-slate-200 bg-white/90 p-4 space-y-3 shadow-sm">
-                                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                                        <div>
-                                                            <p className="text-sm font-semibold text-slate-800">
-                                                                Q{index + 1}. {question.prompt}
-                                                            </p>
-                                                            {question.instructions ? (
-                                                                <p className="text-xs text-slate-500 mt-1">{question.instructions}</p>
-                                                            ) : null}
-                                                            <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                                                                {questionTypeLabels[question.type]}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="space-y-3">
-                                                        {question.parts?.map((part, partIndex) => {
-                                                            const feedback = questionFeedback[part.id];
-                                                            return (
-                                                                <div key={part.id} className="space-y-2">
-                                                                    <label className="text-xs font-semibold text-slate-600">
-                                                                        {part.label} ({question.prompt.split(".")[0]} — blank {partIndex + 1})
-                                                                    </label>
-                                                                    <input
-                                                                        type="text"
-                                                                        value={answers[part.id] ?? ""}
-                                                                        onChange={(event) => handleAnswerChange(part.id, event.target.value)}
-                                                                        disabled={submitted}
-                                                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-amber-500 focus:ring-amber-500 disabled:bg-slate-100 disabled:text-slate-500"
-                                                                        placeholder="Type your answer"
-                                                                    />
-                                                                    {showDetailedResults && submitted && feedback ? (
-                                                                        <QuestionFeedback feedback={feedback} />
-                                                                    ) : null}
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-
-                                        const feedback = questionFeedback[question.id];
-                                        const options = renderOptions(question);
-
-                                        return (
-                                            <div key={question.id} className="rounded-xl border border-slate-200 bg-white/90 p-4 space-y-3 shadow-sm">
-                                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                                    <div>
-                                                        <p className="text-sm font-semibold text-slate-800">
-                                                            Q{index + 1}. {question.prompt}
-                                                        </p>
-                                                        {question.instructions ? (
-                                                            <p className="text-xs text-slate-500 mt-1">{question.instructions}</p>
-                                                        ) : null}
-                                                        <p className="text-[11px] uppercase tracking-wide text-slate-400">
-                                                            {questionTypeLabels[question.type] || "Question"}
-                                                        </p>
-                                                    </div>
-                                                </div>
-
-                                                {["multiple", "match-heading", "matching-info"].includes(question.type) ? (
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                        {options.map((option) => (
-                                                            <label
-                                                                key={option.value}
-                                                                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                                                                    answers[question.id] === option.value
-                                                                        ? "border-amber-400 bg-amber-50 text-amber-700"
-                                                                        : "border-slate-200 hover:bg-slate-50"
-                                                                } ${submitted ? "cursor-not-allowed opacity-80" : "cursor-pointer"}`}
-                                                            >
-                                                                <input
-                                                                    type="radio"
-                                                                    name={question.id}
-                                                                    value={option.value}
-                                                                    disabled={submitted}
-                                                                    checked={answers[question.id] === option.value}
-                                                                    onChange={(event) => handleAnswerChange(question.id, event.target.value)}
-                                                                    className="h-4 w-4 text-amber-600 focus:ring-amber-500"
-                                                                />
-                                                                <span className="font-semibold text-slate-700">{option.value}.</span>
-                                                                <span className="text-slate-600">{option.label}</span>
-                                                            </label>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        value={answers[question.id] ?? ""}
-                                                        onChange={(event) => handleAnswerChange(question.id, event.target.value)}
-                                                        disabled={submitted}
-                                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-amber-500 focus:ring-amber-500 disabled:bg-slate-100 disabled:text-slate-500"
-                                                        placeholder="Type your answer"
-                                                    />
-                                                )}
-
-                                                {showDetailedResults && submitted && feedback ? (
-                                                    <QuestionFeedback feedback={feedback} />
-                                                ) : null}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                    <button
-                                        type="button"
-                                        onClick={() => handleSubmit(false)}
-                                        disabled={submitted || submitting}
-                                        className={`rounded-lg px-5 py-2 text-sm font-semibold transition-all ${
-                                            submitted || submitting
-                                                ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                                                : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                                        }`}
-                                    >
-                                        {submitted ? "Submitted" : submitting ? "Evaluating..." : "Submit Answers"}
-                                    </button>
-                                    <p className="text-xs text-slate-500">
-                                        IELTS Reading has no extra transfer time — answers auto-submit when the timer reaches zero.
+                                <h2 className="text-lg font-bold text-amber-900">{activePassage.title}</h2>
+                            </div>
+                            <div className="space-y-3 text-sm leading-relaxed text-slate-800">
+                                {activePassage.paragraphs?.map((para) => (
+                                    <p key={para.id}>
+                                        <span className="font-bold text-amber-700 mr-1">{para.id}</span>
+                                        {para.text}
                                     </p>
-                                </div>
+                                ))}
                             </div>
                         </div>
-
-                        {results ? (
-                            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white/85 p-5">
-                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                    <div>
-                                        <h3 className="text-lg font-semibold text-slate-800">Test Summary</h3>
-                                        <p className="text-xs text-slate-500">
-                                            Mode: {mode === "practice" ? "Practice (feedback unlocked)" : "Exam (feedback restricted)"}
-                                        </p>
-                                    </div>
-                                    <div className="inline-flex items-center gap-3">
-                                        <span className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700">
-                                            Correct: {results.correctCount} / {results.totalQuestions}
-                                        </span>
-                                        <span className="rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700">
-                                            Scaled: {results.scaledScore} / 40
-                                        </span>
-                                        <span className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
-                                            Band: {results.band}
-                                        </span>
-                                    </div>
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                    {results.autoSubmitted
-                                        ? "Auto-submitted when the timer expired."
-                                        : "Submitted manually before time elapsed."}{" "}
-                                    {mode === "exam" && !showDetailedResults
-                                        ? "Review remains hidden — use the 'Reveal Answers' button to inspect feedback."
-                                        : ""}
-                                </p>
-                            </div>
-                        ) : null}
-                    </Panel>
+                    )}
                 </div>
 
-                <Panel
-                    title="Reading Progress"
-                    className="max-w-7xl mx-auto space-y-6 bg-white/80 backdrop-blur rounded-2xl shadow-md"
-                >
-                    {history.length === 0 ? (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-6 text-center text-sm text-slate-600">
-                            Complete a reading attempt to start tracking your progress over time.
+                {/* Right: Questions */}
+                <div className="bg-white overflow-y-auto max-h-[calc(100vh-220px)] p-5 space-y-6">
+                    {passageQuestions.map((question) => (
+                        <div
+                            key={question.id}
+                            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                        >
+                            <QuestionField
+                                question={question}
+                                passage={activePassage}
+                                answers={answers}
+                                onChange={handleAnswerChange}
+                                disabled={submitted}
+                                feedback={null}
+                            />
                         </div>
-                    ) : (
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-slate-200 text-sm">
-                                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                                    <tr>
-                                        <th className="px-4 py-3">Date</th>
-                                        <th className="px-4 py-3">Set</th>
-                                        <th className="px-4 py-3">Mode</th>
-                                        <th className="px-4 py-3">Correct</th>
-                                        <th className="px-4 py-3">Scaled Score</th>
-                                        <th className="px-4 py-3">Band</th>
-                                        <th className="px-4 py-3">Notes</th>
+                    ))}
+                </div>
+            </div>
+
+            {/* Bottom navigation */}
+            <div className="sticky bottom-0 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-4 shadow-lg">
+                <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        disabled={passageIndex <= 0}
+                        onClick={() => setActivePassageId(PASSAGE_ORDER[passageIndex - 1])}
+                        className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                        ← Previous Passage
+                    </button>
+                    <p className="text-xs text-slate-500 text-center">
+                        Passage {passageIndex + 1} of 3 · Questions{" "}
+                        {passageIndex === 0 ? "1–13" : passageIndex === 1 ? "14–26" : "27–40"}
+                    </p>
+                    <div className="flex gap-2">
+                        {passageIndex < PASSAGE_ORDER.length - 1 && (
+                            <button
+                                type="button"
+                                onClick={() => setActivePassageId(PASSAGE_ORDER[passageIndex + 1])}
+                                className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900"
+                            >
+                                Next Passage →
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => handleSubmit(false)}
+                            disabled={submitted || submitting}
+                            className="px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                            {submitting ? "Submitting..." : "Submit Test"}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {!embedded && history.length > 0 && (
+                <div className="p-4 max-w-[1600px] mx-auto w-full pb-8">
+                    <Panel title="Recent Attempts" className="bg-white/80">
+                        <div className="overflow-x-auto text-sm">
+                            <table className="min-w-full">
+                                <thead>
+                                    <tr className="text-left text-xs uppercase text-slate-500 border-b">
+                                        <th className="py-2 pr-4">Date</th>
+                                        <th className="py-2 pr-4">Band</th>
+                                        <th className="py-2 pr-4">Score</th>
+                                        <th className="py-2 pr-4">Time</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {history.map((entry) => (
-                                        <tr key={entry.id} className="bg-white/70 hover:bg-amber-50/60 transition-colors">
-                                            <td className="px-4 py-3 text-slate-600">
-                                                {new Date(entry.submittedAt).toLocaleString()}
+                                <tbody>
+                                    {history.slice(0, 5).map((h) => (
+                                        <tr key={h.id} className="border-b border-slate-100">
+                                            <td className="py-2 pr-4 text-slate-600">
+                                                {new Date(h.submittedAt).toLocaleString()}
                                             </td>
-                                            <td className="px-4 py-3 text-slate-700">{entry.title}</td>
-                                            <td className="px-4 py-3 text-slate-600 capitalize">{entry.mode}</td>
-                                            <td className="px-4 py-3 text-slate-600">
-                                                {entry.correctCount}/{entry.totalQuestions}
+                                            <td className="py-2 pr-4 font-semibold text-amber-700">{h.band}</td>
+                                            <td className="py-2 pr-4">
+                                                {h.correctCount}/{h.totalQuestions}
                                             </td>
-                                            <td className="px-4 py-3 text-slate-600">{entry.scaledScore}/40</td>
-                                            <td className="px-4 py-3">
-                                                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                                                    {entry.band}
-                                                    {entry.autoSubmitted ? <span className="text-[10px] text-emerald-600">AUTO</span> : null}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-xs text-slate-500">
-                                                {entry.mode === "exam" ? "Exam mode attempt" : "Practice review completed"}
-                                            </td>
+                                            <td className="py-2 pr-4">{formatTime(h.timeSpentSec || 0)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                         </div>
-                    )}
-                </Panel>
-            </div>
-    );
-
-    return embedded ? mainContent : <AppLayout>{mainContent}</AppLayout>;
-}
-
-function QuestionFeedback({ feedback }) {
-    if (!feedback) return null;
-    return (
-        <div
-            className={`rounded-lg border px-3 py-2 text-xs ${
-                feedback.isCorrect
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-rose-200 bg-rose-50 text-rose-700"
-            }`}
-        >
-            <p className="font-semibold">{feedback.isCorrect ? "Correct" : "Incorrect"}</p>
-            {!feedback.isCorrect && feedback.userAnswer ? (
-                <p className="mt-1 text-slate-700">
-                    Your answer: <span className="font-medium">{feedback.userAnswer}</span>
-                </p>
-            ) : null}
-            <p className="mt-1 text-slate-700">
-                Correct answer: <span className="font-medium">{feedback.correctAnswer}</span>
-            </p>
-            {feedback.explanation ? (
-                <p className="mt-1 text-slate-600">{feedback.explanation}</p>
-            ) : null}
+                    </Panel>
+                </div>
+            )}
         </div>
     );
+
+    return embedded ? examContent : <AppLayout>{examContent}</AppLayout>;
 }
