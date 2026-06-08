@@ -2,9 +2,12 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Mic, Headphones, BookOpen, PenTool, ListChecks, BarChart3, Clock, Users, Award, Zap } from 'lucide-react';
+import PublicSiteNav from '../components/PublicSiteNav';
+import PublicSiteFooter from '../components/PublicSiteFooter';
 
 export default function ServicesPage() {
     const { user } = useAuth();
+    const serviceHref = (path) => (user ? path : '/register');
     const [isVisible, setIsVisible] = useState(false);
     const sectionRef = useRef(null);
 
@@ -91,53 +94,7 @@ export default function ServicesPage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
-            {/* Header */}
-            <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-xl shadow-sm border-b border-slate-200/30">
-                <div className="max-w-[1400px] mx-auto flex justify-between items-center px-4 sm:px-6 md:px-10 py-4">
-                    <Link to="/" className="flex items-center gap-3 group">
-                        <img 
-                            src="/IeltsCoach logo.jpeg" 
-                            alt="IELTS Coach Logo" 
-                            className="h-12 w-auto transition-transform duration-300 group-hover:scale-110"
-                        />
-                        <span className="text-2xl font-extrabold text-purple-700 leading-tight transition-colors duration-300 group-hover:text-purple-800">IELTSCoach</span>
-                    </Link>
-
-                    <nav className="hidden md:flex items-center gap-6 text-slate-700 text-base font-normal">
-                        <Link to="/" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Home</Link>
-                        <Link to="#features" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Features</Link>
-                        <Link to="/about" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">About US</Link>
-                        <Link to="/services" className="text-purple-700 font-semibold">Our Services</Link>
-                        <Link to="/contact" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Contact</Link>
-                    </nav>
-
-                    <div className="flex items-center gap-3">
-                        {!user ? (
-                            <>
-                                <Link
-                                    to="/login"
-                                    className="px-4 py-2 rounded-md border border-purple-600 text-purple-600 font-semibold text-sm hover:bg-purple-50 transition-all"
-                                >
-                                    Login
-                                </Link>
-                                <Link
-                                    to="/register"
-                                    className="px-5 py-2.5 rounded-md text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                                >
-                                    Register
-                                </Link>
-                            </>
-                        ) : (
-                            <Link
-                                to="/dashboard"
-                                className="px-5 py-2.5 rounded-lg text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                            >
-                                Go to Dashboard
-                            </Link>
-                        )}
-                    </div>
-                </div>
-            </header>
+            <PublicSiteNav />
 
             {/* Hero Section */}
             <section className="relative py-20 md:py-28 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white overflow-hidden">
@@ -178,10 +135,10 @@ export default function ServicesPage() {
                                     ))}
                                 </ul>
                                 <Link
-                                    to={service.href}
+                                    to={serviceHref(service.href)}
                                     className={`inline-flex items-center justify-center w-full bg-gradient-to-r ${service.color} text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all duration-300 hover:scale-105`}
                                 >
-                                    Try Now
+                                    {user ? "Try Now" : "Register to Try"}
                                 </Link>
                             </div>
                         ))}
@@ -222,10 +179,7 @@ export default function ServicesPage() {
                 </div>
             </section>
 
-            {/* Footer */}
-            <footer className="bg-slate-900 text-slate-300 text-center py-8 text-lg">
-                © {new Date().getFullYear()} IELTS Coach | Developed by <span className="text-purple-400 font-semibold">Software Engineering Students</span>
-            </footer>
+            <PublicSiteFooter />
         </div>
     );
 }

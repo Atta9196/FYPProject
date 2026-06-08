@@ -7,7 +7,7 @@ export default function Register() {
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-purple-50 via-white to-blue-50">
       {/* Header with Logo */}
       <header className="w-full py-6 px-4 sm:px-6 md:px-10">
-        <div className="max-w-7xl mx-auto">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <Link to="/" className="flex items-center gap-3 group">
             <img 
               src="/IeltsCoach logo.jpeg" 
@@ -16,6 +16,13 @@ export default function Register() {
             />
             <span className="text-2xl font-extrabold text-purple-700 leading-tight transition-colors duration-300 group-hover:text-purple-800">IELTSCoach</span>
           </Link>
+          <nav className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
+            <Link to="/" className="hover:text-purple-700">Home</Link>
+            <Link to="/#features" className="hover:text-purple-700">Features</Link>
+            <Link to="/about" className="hover:text-purple-700">About</Link>
+            <Link to="/services" className="hover:text-purple-700">Services</Link>
+            <Link to="/contact" className="hover:text-purple-700">Contact</Link>
+          </nav>
         </div>
       </header>
 

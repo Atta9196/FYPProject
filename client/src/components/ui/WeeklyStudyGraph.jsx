@@ -2,7 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { getAllProgressData } from '../../services/progressService';
 
-export default function WeeklyStudyGraph({ data, height = 200 }) {
+function getEntryDate(entry) {
+    return entry?.submittedAt || entry?.completedAt || entry?.date || null;
+}
+
+export default function WeeklyStudyGraph({ data, height = 200, userId = null }) {
     const [chartData, setChartData] = useState([
         { day: 'Mon', hours: 0, tests: 0 },
         { day: 'Tue', hours: 0, tests: 0 },
@@ -21,12 +25,13 @@ export default function WeeklyStudyGraph({ data, height = 200 }) {
             }
 
             try {
-                const progress = getAllProgressData();
+                const progress = getAllProgressData(userId);
                 const allEntries = [
                     ...progress.reading,
                     ...progress.writing,
                     ...progress.listening,
-                    ...progress.speaking
+                    ...progress.speaking,
+                    ...(progress.fullTest || []),
                 ];
 
                 // Get last 7 days
@@ -39,8 +44,10 @@ export default function WeeklyStudyGraph({ data, height = 200 }) {
                     nextDate.setDate(nextDate.getDate() + 1);
 
                     const dayEntries = allEntries.filter(entry => {
-                        const entryDate = new Date(entry.submittedAt);
-                        return entryDate >= date && entryDate < nextDate;
+                        const dateStr = getEntryDate(entry);
+                        if (!dateStr) return false;
+                        const entryDate = new Date(dateStr);
+                        return !isNaN(entryDate.getTime()) && entryDate >= date && entryDate < nextDate;
                     });
 
                     const tests = dayEntries.length;
@@ -70,7 +77,7 @@ export default function WeeklyStudyGraph({ data, height = 200 }) {
             clearInterval(interval);
             window.removeEventListener('progressUpdated', handleProgressUpdate);
         };
-    }, [data]);
+    }, [data, userId]);
 
     return (
         <div className="bg-white/90 backdrop-blur rounded-2xl p-6 shadow-lg">

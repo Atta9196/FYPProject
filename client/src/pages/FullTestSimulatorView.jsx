@@ -25,10 +25,7 @@ function getStorageKey(userId, module) {
     if (module) {
         return getStorageKeyForModule(module, userId) || `ielts-${module}-history`;
     }
-    // For full test history, use a user-specific key
-    if (!userId) return "ielts-full-test-history";
-    const userIdentifier = userId.replace(/[^a-zA-Z0-9]/g, '_');
-    return `ielts-full-test-history_${userIdentifier}`;
+    return getStorageKeyForModule("full-test", userId) || "ielts-full-test-history";
 }
 
 function loadHistory(userId, module = null) {

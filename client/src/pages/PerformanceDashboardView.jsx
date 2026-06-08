@@ -13,69 +13,40 @@ import {
     getWeeklyTests,
     getModuleBreakdown,
     getPracticeHistory,
-    getAllProgressData
+    getMonthlyTestCount,
 } from "../services/progressService";
 
 export function PerformanceDashboardView() {
     const { user } = useAuth();
     const [selectedTimeframe, setSelectedTimeframe] = useState('3months');
+    const emptyModule = {
+        averageBand: 0,
+        attempts: 0,
+        improvement: '+0.0',
+        weakAreas: [],
+    };
+
     const [performanceData, setPerformanceData] = useState({
-        bandProgress: [
-            { month: 'Jan', overall: 5.5, speaking: 5.0, reading: 6.0, writing: 5.5, listening: 6.0 },
-            { month: 'Feb', overall: 6.0, speaking: 5.5, reading: 6.5, writing: 6.0, listening: 6.5 },
-            { month: 'Mar', overall: 6.5, speaking: 6.0, reading: 7.0, writing: 6.5, listening: 7.0 },
-            { month: 'Apr', overall: 7.0, speaking: 6.5, reading: 7.5, writing: 7.0, listening: 7.5 },
-            { month: 'May', overall: 7.5, speaking: 7.0, reading: 7.5, writing: 7.0, listening: 8.0 },
-            { month: 'Jun', overall: 7.5, speaking: 7.0, reading: 7.5, writing: 7.0, listening: 8.0 }
-        ],
-        weeklyTests: [
-            { week: 'Week 1', tests: 3 },
-            { week: 'Week 2', tests: 5 },
-            { week: 'Week 3', tests: 4 },
-            { week: 'Week 4', tests: 6 },
-            { week: 'Week 5', tests: 7 },
-            { week: 'Week 6', tests: 5 }
-        ],
+        bandProgress: [],
+        weeklyTests: [],
         moduleBreakdown: {
-            speaking: { averageBand: 7.0, attempts: 15, improvement: '+0.5', weakAreas: ['Pronunciation', 'Fluency'] },
-            listening: { averageAccuracy: 85, attempts: 12, improvement: '+5%', weakAreas: ['Map completion', 'Multiple choice'] },
-            reading: { speed: 180, accuracy: 78, attempts: 10, improvement: '+10 wpm', weakAreas: ['True/False/Not Given', 'Matching headings'] },
-            writing: { task1: 6.5, task2: 7.0, attempts: 8, improvement: '+0.5', weakAreas: ['Task 1 structure', 'Task 2 arguments'] }
+            speaking: { ...emptyModule, weakAreas: ['Pronunciation', 'Fluency'] },
+            listening: { ...emptyModule, averageAccuracy: 0, weakAreas: ['Map completion', 'Multiple choice'] },
+            reading: { ...emptyModule, speed: 0, accuracy: 0, weakAreas: ['True/False/Not Given', 'Matching headings'] },
+            writing: { ...emptyModule, task1: 0, task2: 0, weakAreas: ['Task 1 structure', 'Task 2 arguments'] },
         },
-        practiceHistory: [
-            { date: '2024-06-15', type: 'Speaking Practice', band: 7.0, duration: '15 min', feedback: 'Good fluency, work on pronunciation' },
-            { date: '2024-06-14', type: 'Reading Test', band: 7.5, duration: '60 min', feedback: 'Excellent comprehension, improve speed' },
-            { date: '2024-06-13', type: 'Writing Task 1', band: 7.0, duration: '20 min', feedback: 'Clear structure, add more detail' },
-            { date: '2024-06-12', type: 'Listening Test', band: 8.0, duration: '40 min', feedback: 'Perfect score! Great focus' },
-            { date: '2024-06-11', type: 'Speaking Part 2', band: 6.5, duration: '12 min', feedback: 'Good ideas, develop more detail' },
-            { date: '2024-06-10', type: 'Full Test Simulation', band: 7.5, duration: '170 min', feedback: 'Strong overall performance' }
-        ],
+        practiceHistory: [],
         aiInsights: {
-            strengths: [
-                'Excellent listening comprehension skills',
-                'Strong vocabulary range in writing',
-                'Good coherence in speaking responses',
-                'Consistent practice habits'
-            ],
-            improvements: [
-                'Focus on pronunciation clarity in speaking',
-                'Increase reading speed while maintaining accuracy',
-                'Develop more complex sentence structures in writing',
-                'Practice map completion tasks in listening'
-            ],
-            recommendations: [
-                'Practice speaking Part 2 monologues daily',
-                'Read academic articles for 30 minutes daily',
-                'Complete one writing task per day',
-                'Focus on listening map completion exercises'
-            ]
+            strengths: [],
+            improvements: [],
+            recommendations: [],
         },
         goals: {
             monthlyGoal: 60,
             achieved: 0,
-            testDate: '2024-12-15',
-            daysRemaining: 172
-        }
+            testDate: '',
+            daysRemaining: 0,
+        },
     });
 
     // Load performance data (timeframe passed in so it's always current when effect runs)
@@ -84,15 +55,12 @@ export function PerformanceDashboardView() {
         try {
             const userId = user?.email || user?.id || null;
             const bandProgress = getBandProgress(range, userId);
-            const weeklyTests = getWeeklyTests(range, userId);
+            const weeklyTests = getWeeklyTests(userId, range);
             const moduleBreakdown = getModuleBreakdown(userId);
             const practiceHistory = getPracticeHistory(20, range, userId);
 
-            // Calculate monthly goal progress
-            const allProgress = getAllProgressData(userId);
-            const totalTests = allProgress.reading.length + allProgress.writing.length + allProgress.listening.length;
             const monthlyGoal = 60;
-            const achieved = totalTests;
+            const achieved = getMonthlyTestCount(userId);
 
             // Calculate days remaining (assuming test date is 6 months from now if not set)
             const testDate = new Date();

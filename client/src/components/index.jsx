@@ -34,9 +34,9 @@ export function Navbar() {
           <Link to="/" className="transition-all duration-200 hover:text-purple-700 hover:scale-105">
             Home
           </Link>
-          <a href="#features" className="transition-all duration-200 hover:text-purple-700 hover:scale-105">
+          <Link to="/#features" className="transition-all duration-200 hover:text-purple-700 hover:scale-105">
             Features
-          </a>
+          </Link>
           <Link to="/services" className="transition-all duration-200 hover:text-purple-700 hover:scale-105">
             Services
           </Link>
@@ -97,7 +97,7 @@ export function Navbar() {
           <div className="md:hidden absolute left-0 right-0 top-16 z-40 border-b border-slate-200 bg-white shadow-lg">
             <nav className="flex flex-col px-4 py-3 text-base font-medium text-slate-700">
               <Link to="/" className="py-2.5 hover:text-purple-700">Home</Link>
-              <a href="#features" className="py-2.5 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Features</a>
+              <Link to="/#features" className="py-2.5 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Features</Link>
               <Link to="/services" className="py-2.5 hover:text-purple-700">Services</Link>
               <Link to="/about" className="py-2.5 hover:text-purple-700">About</Link>
               <Link to="/contact" className="py-2.5 hover:text-purple-700">Contact</Link>
@@ -138,6 +138,9 @@ export function Footer() {
           <div className="space-y-2 text-sm">
             <p className="font-semibold text-slate-800">Quick Links</p>
             <div className="flex flex-col gap-1 text-slate-600">
+              <Link to="/" className="hover:text-purple-700">Home</Link>
+              <Link to="/about" className="hover:text-purple-700">About Us</Link>
+              <Link to="/services" className="hover:text-purple-700">Services</Link>
               <Link to="/dashboard" className="hover:text-purple-700">
                 Dashboard
               </Link>

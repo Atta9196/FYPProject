@@ -1,24 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { CheckCircle2, ArrowRight, Mic, BookOpen, BarChart3, ListChecks } from 'lucide-react';
+import { CheckCircle2, ArrowRight, Mic, BookOpen, BarChart3, ListChecks, Headphones, PenTool, Mail } from 'lucide-react';
 import FloatingChatButton from '../components/FloatingChatButton';
+import PublicSiteNav from '../components/PublicSiteNav';
+import PublicSiteFooter from '../components/PublicSiteFooter';
+import useScrollToHash from '../hooks/useScrollToHash';
 
 export default function LandingPage() {
   const { user } = useAuth();
   const getStartedTo = user ? '/dashboard' : '/register';
+  const featureHref = (path) => (user ? path : '/register');
   const [isVisible, setIsVisible] = useState({});
-  const [mobileOpen, setMobileOpen] = useState(false);
   const heroRef = useRef(null);
+  useScrollToHash();
   const featuresRef = useRef(null);
   const cardsRef = useRef(null);
-
-  useEffect(() => {
-    if (!mobileOpen) return;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, [mobileOpen]);
 
   useEffect(() => {
     const observerOptions = {
@@ -63,94 +60,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans antialiased">
-      {/* Navbar */}
-      <header className="sticky top-0 z-50 bg-white shadow-sm border-b border-slate-200/30 animate-fade-in">
-        <div className="max-w-[1400px] mx-auto flex justify-between items-center px-4 sm:px-6 md:px-10 py-3 sm:py-4">
-          <Link to="/" className="flex items-center gap-2 sm:gap-3 group min-w-0">
-            <img
-              src="/IeltsCoach logo.jpeg"
-              alt="IELTS Coach Logo"
-              className="h-10 sm:h-12 w-auto transition-transform duration-300 group-hover:scale-110 shrink-0"
-            />
-            <span className="text-xl sm:text-2xl font-extrabold text-purple-700 leading-tight transition-colors duration-300 group-hover:text-purple-800 truncate">IELTSCoach</span>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-6 text-slate-700 text-base font-normal">
-            <a href="#home" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Home</a>
-            <a href="#features" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Features</a>
-            <a href="/about" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">About US</a>
-            <a href="#services" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Our Services</a>
-            <a href="#contact" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Contact</a>
-          </nav>
-
-          <div className="hidden md:flex items-center gap-3">
-            {!user ? (
-              <>
-                <Link
-                  to="/login"
-                  className="px-4 py-2 rounded-md border border-purple-600 text-purple-600 font-semibold text-sm hover:bg-purple-50 transition-all"
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/register"
-                  className="px-5 py-2.5 rounded-md text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                >
-                  Register
-                </Link>
-              </>
-            ) : (
-                <Link
-                  to="/dashboard"
-                  className="px-5 py-2.5 rounded-lg text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                >
-                  Go to Dashboard
-                </Link>
-            )}
-          </div>
-
-          {/* Mobile hamburger */}
-          <button
-            type="button"
-            onClick={() => setMobileOpen((v) => !v)}
-            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={mobileOpen}
-            className="md:hidden inline-flex items-center justify-center p-2 rounded-md text-slate-700 hover:bg-slate-100 border border-slate-200"
-          >
-            {mobileOpen ? (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
-            )}
-          </button>
-        </div>
-
-        {/* Mobile menu panel */}
-        {mobileOpen && (
-          <>
-            <div className="md:hidden fixed inset-0 top-[60px] z-30 bg-slate-900/40" onClick={() => setMobileOpen(false)} aria-hidden="true" />
-            <div className="md:hidden border-b border-slate-200 bg-white shadow-lg relative z-40">
-              <nav className="flex flex-col px-4 py-2 text-base font-medium text-slate-700">
-                <a href="#home" className="py-3 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Home</a>
-                <a href="#features" className="py-3 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Features</a>
-                <a href="/about" className="py-3 hover:text-purple-700" onClick={() => setMobileOpen(false)}>About US</a>
-                <a href="#services" className="py-3 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Our Services</a>
-                <a href="#contact" className="py-3 hover:text-purple-700" onClick={() => setMobileOpen(false)}>Contact</a>
-              </nav>
-              <div className="border-t border-slate-200 px-4 py-3 flex flex-col gap-2">
-                {!user ? (
-                  <>
-                    <Link to="/login" className="w-full text-center px-4 py-2 rounded-md border border-purple-600 text-purple-600 font-semibold text-sm hover:bg-purple-50" onClick={() => setMobileOpen(false)}>Login</Link>
-                    <Link to="/register" className="w-full text-center px-5 py-2.5 rounded-md text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700" onClick={() => setMobileOpen(false)}>Register</Link>
-                  </>
-                ) : (
-                  <Link to="/dashboard" className="w-full text-center px-5 py-2.5 rounded-lg text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700" onClick={() => setMobileOpen(false)}>Go to Dashboard</Link>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </header>
+      <PublicSiteNav />
 
       {/* First Hero Section - Landing Page */}
       <section id="home" ref={heroRef} className="relative min-h-[90vh] flex items-center bg-white py-12 md:py-16">
@@ -234,7 +144,7 @@ export default function LandingPage() {
               icon={<Mic className="w-8 h-8 text-blue-500" />}
               title="AI Speaking Assistant"
               desc="Real-time feedback on fluency, coherence, and pronunciation."
-              href="/speaking"
+              href={featureHref("/speaking")}
               cta="Go to Speaking →"
               buttonColor="bg-blue-500 hover:bg-blue-600"
               index={0}
@@ -243,7 +153,7 @@ export default function LandingPage() {
               icon={<BarChart3 className="w-8 h-8 text-orange-500" />}
               title="Performance Dashboard"
               desc="Track your band score, speed, and progress visually."
-              href="/dashboard"
+              href={featureHref("/dashboard")}
               cta="Open Dashboard →"
               buttonColor="bg-orange-500 hover:bg-orange-600"
               index={1}
@@ -252,7 +162,7 @@ export default function LandingPage() {
               icon={<BookOpen className="w-8 h-8 text-green-500" />}
               title="Mock IELTS Tests"
               desc="Practice full IELTS simulations across all modules."
-              href="/tests"
+              href={featureHref("/tests")}
               cta="Start Tests →"
               buttonColor="bg-green-500 hover:bg-green-600"
               index={2}
@@ -261,7 +171,7 @@ export default function LandingPage() {
               icon={<ListChecks className="w-8 h-8 text-purple-500" />}
               title="MCQ Practice Bank"
               desc="Access timed practice with instant explanations."
-              href="/mcq"
+              href={featureHref("/mcq")}
               cta="Practice MCQs →"
               buttonColor="bg-purple-500 hover:bg-purple-600"
               index={3}
@@ -270,12 +180,12 @@ export default function LandingPage() {
 
           {/* Bottom CTA Buttons */}
           <div className={`flex items-center justify-center gap-4 flex-wrap ${isVisible.features ? 'animate-fade-up' : 'opacity-0'}`} style={{ animationDelay: '0.4s' }}>
-            <a
-              href="#about"
+            <Link
+              to="/about"
               className="px-6 py-3 rounded-lg border border-slate-300 bg-white text-slate-700 font-semibold text-base hover:bg-slate-50 shadow-md transition-all duration-300 hover:scale-105"
             >
               Why choose IELTS Coach
-            </a>
+            </Link>
             <Link
               to={getStartedTo}
               className="px-6 py-3 rounded-lg bg-purple-600 text-white font-semibold text-base hover:bg-purple-700 shadow-md transition-all duration-300 hover:scale-105 inline-flex items-center gap-2 group"
@@ -287,13 +197,74 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-slate-900 text-slate-300 text-center py-8 text-lg">
-        © {new Date().getFullYear()} IELTS Coach | Developed by <span className="text-purple-400 font-semibold">Software Engineering Students</span>
-      </footer>
+      {/* Services Preview */}
+      <section id="services" className="relative py-16 md:py-20 bg-white border-t border-slate-100">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-purple-700 mb-4">Our Services</h2>
+            <p className="text-slate-600 max-w-2xl mx-auto">
+              Complete IELTS preparation across all four modules — speaking, listening, reading, and writing.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            {[
+              { icon: Mic, title: "Speaking", desc: "AI examiner with voice and text modes", to: "/speaking" },
+              { icon: Headphones, title: "Listening", desc: "Timed tests with transcripts", to: "/listening" },
+              { icon: BookOpen, title: "Reading", desc: "Authentic passages and scoring", to: "/reading" },
+              { icon: PenTool, title: "Writing", desc: "Task 1 & 2 with AI feedback", to: "/writing" },
+            ].map(({ icon: Icon, title, desc, to }) => (
+              <div key={title} className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-6 border border-purple-100 shadow-sm hover:shadow-md transition-all">
+                <Icon className="w-8 h-8 text-purple-600 mb-4" />
+                <h3 className="text-lg font-semibold text-purple-700 mb-2">{title}</h3>
+                <p className="text-sm text-slate-600 mb-4">{desc}</p>
+                <Link to={featureHref(to)} className="text-sm font-semibold text-purple-600 hover:text-purple-800">
+                  Explore {title} →
+                </Link>
+              </div>
+            ))}
+          </div>
+          <div className="text-center">
+            <Link
+              to="/services"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-all"
+            >
+              View All Services
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+          </div>
+        </div>
+      </section>
 
-      {/* Floating Chatbot Button - shared component (zoom-safe + safe-area aware) */}
-      <FloatingChatButton />
+      {/* Contact Preview */}
+      <section id="contact" className="relative py-16 md:py-20 bg-gradient-to-br from-purple-50 via-white to-blue-50">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-10 text-center">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-purple-100 text-purple-600 mb-6">
+            <Mail className="w-7 h-7" />
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-purple-700 mb-4">Get In Touch</h2>
+          <p className="text-slate-600 max-w-2xl mx-auto mb-8">
+            Questions about IELTS Coach, your account, or how to get started? Our team is here to help.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link
+              to="/contact"
+              className="px-6 py-3 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-all"
+            >
+              Contact Us
+            </Link>
+            <Link
+              to={user ? "/support" : "/register"}
+              className="px-6 py-3 rounded-lg border border-slate-300 bg-white text-slate-700 font-semibold hover:bg-slate-50 transition-all"
+            >
+              {user ? "Help Center" : "Create Free Account"}
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <PublicSiteFooter />
+
+      <FloatingChatButton to={user ? "/chatbot" : "/login"} />
     </div>
   );
 }

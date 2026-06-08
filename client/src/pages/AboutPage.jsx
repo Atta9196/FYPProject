@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Target, Users, Award, BookOpen, TrendingUp, CheckCircle2, ArrowRight } from 'lucide-react';
+import PublicSiteNav from '../components/PublicSiteNav';
+import PublicSiteFooter from '../components/PublicSiteFooter';
 
 export default function AboutPage() {
     const { user } = useAuth();
@@ -33,53 +35,7 @@ export default function AboutPage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50">
-            {/* Header */}
-            <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-xl shadow-sm border-b border-slate-200/30">
-                <div className="max-w-[1400px] mx-auto flex justify-between items-center px-4 sm:px-6 md:px-10 py-4">
-                    <Link to="/" className="flex items-center gap-3 group">
-                        <img 
-                            src="/IeltsCoach logo.jpeg" 
-                            alt="IELTS Coach Logo" 
-                            className="h-12 w-auto transition-transform duration-300 group-hover:scale-110"
-                        />
-                        <span className="text-2xl font-extrabold text-purple-700 leading-tight transition-colors duration-300 group-hover:text-purple-800">IELTSCoach</span>
-                    </Link>
-
-                    <nav className="hidden md:flex items-center gap-6 text-slate-700 text-base font-normal">
-                        <Link to="/" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Home</Link>
-                        <Link to="#features" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Features</Link>
-                        <Link to="/about" className="text-purple-700 font-semibold">About US</Link>
-                        <Link to="/services" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Our Services</Link>
-                        <Link to="/contact" className="hover:text-purple-700 transition-all duration-300 hover:scale-105">Contact</Link>
-                    </nav>
-
-                    <div className="flex items-center gap-3">
-                        {!user ? (
-                            <>
-                                <Link
-                                    to="/login"
-                                    className="px-4 py-2 rounded-md border border-purple-600 text-purple-600 font-semibold text-sm hover:bg-purple-50 transition-all"
-                                >
-                                    Login
-                                </Link>
-                                <Link
-                                    to="/register"
-                                    className="px-5 py-2.5 rounded-md text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                                >
-                                    Register
-                                </Link>
-                            </>
-                        ) : (
-                            <Link
-                                to="/dashboard"
-                                className="px-5 py-2.5 rounded-lg text-white font-semibold text-sm bg-purple-600 hover:bg-purple-700 transition-all"
-                            >
-                                Go to Dashboard
-                            </Link>
-                        )}
-                    </div>
-                </div>
-            </header>
+            <PublicSiteNav />
 
             {/* Hero Section */}
             <section className="relative py-20 md:py-28 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 text-white overflow-hidden">
@@ -213,10 +169,7 @@ export default function AboutPage() {
                 </div>
             </section>
 
-            {/* Footer */}
-            <footer className="bg-slate-900 text-slate-300 text-center py-8 text-lg">
-                © {new Date().getFullYear()} IELTS Coach | Developed by <span className="text-purple-400 font-semibold">Software Engineering Students</span>
-            </footer>
+            <PublicSiteFooter />
         </div>
     );
 }

@@ -92,7 +92,7 @@ export function ProfileView() {
             window.removeEventListener('progressUpdated', handleProgressUpdate);
             window.removeEventListener('storage', storageListener);
         };
-    }, []);
+    }, [user]);
 
     const handleProfileChange = (field, value) => {
         setProfileData(prev => ({

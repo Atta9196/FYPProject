@@ -138,7 +138,8 @@ export function DashboardView() {
                 e.key.includes('ielts-reading-history') || 
                 e.key.includes('ielts-writing-history') || 
                 e.key.includes('ielts-listening-history') ||
-                e.key.includes('ielts-speaking-history')
+                e.key.includes('ielts-speaking-history') ||
+                e.key.includes('ielts-full-test-history')
             ) && e.key.includes(userIdentifier)) {
                 loadProgressData();
             }
@@ -286,7 +287,7 @@ export function DashboardView() {
                     </div>
 
                     {/* Weekly Study Graph */}
-                    <WeeklyStudyGraph />
+                    <WeeklyStudyGraph userId={user?.email || user?.id || null} />
 
                     {/* Main Content Grid */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
@@ -347,6 +348,7 @@ export function DashboardView() {
                                                     activity.color === 'green' ? 'bg-green-500' :
                                                     activity.color === 'blue' ? 'bg-blue-500' :
                                                     activity.color === 'purple' ? 'bg-purple-500' :
+                                                    activity.color === 'indigo' ? 'bg-indigo-500' :
                                                     'bg-orange-500'
                                                 }`}></div>
                                             <div className="text-2xl">{activity.icon}</div>

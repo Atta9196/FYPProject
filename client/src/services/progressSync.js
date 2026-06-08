@@ -23,12 +23,13 @@ import {
     syncProgress,
 } from "./api/progressApi";
 
-const MODULES = ["reading", "writing", "listening", "speaking"];
+const MODULES = ["reading", "writing", "listening", "speaking", "full-test"];
 const BASE_KEYS = {
     reading: "ielts-reading-history",
     writing: "ielts-writing-history",
     listening: "ielts-listening-history",
     speaking: "ielts-speaking-history",
+    "full-test": "ielts-full-test-history",
 };
 const PUSH_DEBOUNCE_MS = 1200;
 const LAST_PULL_KEY = "ielts-progress-last-pull"; // userId -> ISO

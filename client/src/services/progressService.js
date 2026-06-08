@@ -1,5 +1,53 @@
 // Progress Service - Aggregates real progress data from localStorage and backend
 
+const MODULE_BASE_KEYS = {
+    reading: "ielts-reading-history",
+    writing: "ielts-writing-history",
+    listening: "ielts-listening-history",
+    speaking: "ielts-speaking-history",
+    "full-test": "ielts-full-test-history",
+    fullTest: "ielts-full-test-history",
+};
+
+function getEntryDate(entry) {
+    return entry?.submittedAt || entry?.completedAt || entry?.date || null;
+}
+
+function getSpeakingBand(entry) {
+    const band = parseFloat(entry?.bandScore ?? entry?.band ?? 0);
+    return isNaN(band) ? 0 : band;
+}
+
+function getModuleBand(entry, module) {
+    if (module === "writing") {
+        const band = parseFloat(entry?.overallBand ?? 0);
+        return isNaN(band) ? 0 : band;
+    }
+    if (module === "speaking") return getSpeakingBand(entry);
+    if (module === "fullTest") {
+        const band = parseFloat(entry?.overallBand ?? entry?.band ?? 0);
+        return isNaN(band) ? 0 : band;
+    }
+    const band = parseFloat(entry?.band ?? entry?.bandScore ?? 0);
+    return isNaN(band) ? 0 : band;
+}
+
+function getSpeakingTypeLabel(entry) {
+    if (entry?.type === "realtime_practice") return "Speaking Practice (Voice)";
+    if (entry?.type === "recorded_practice") return "Speaking Practice (Recorded)";
+    return "Speaking Practice";
+}
+
+function getAllPracticeEntries(progress) {
+    return [
+        ...progress.reading,
+        ...progress.writing,
+        ...progress.listening,
+        ...progress.speaking,
+        ...(progress.fullTest || []),
+    ];
+}
+
 /**
  * Get user-specific storage key
  */
@@ -17,22 +65,22 @@ function getUserStorageKey(baseKey, userId) {
  * Get storage keys for a specific user
  */
 function getStorageKeys(userId) {
-    const baseKeys = {
-        reading: "ielts-reading-history",
-        writing: "ielts-writing-history",
-        listening: "ielts-listening-history",
-        speaking: "ielts-speaking-history"
-    };
-    
     if (!userId) {
-        return baseKeys;
+        return {
+            reading: MODULE_BASE_KEYS.reading,
+            writing: MODULE_BASE_KEYS.writing,
+            listening: MODULE_BASE_KEYS.listening,
+            speaking: MODULE_BASE_KEYS.speaking,
+            fullTest: MODULE_BASE_KEYS.fullTest,
+        };
     }
-    
+
     return {
-        reading: getUserStorageKey(baseKeys.reading, userId),
-        writing: getUserStorageKey(baseKeys.writing, userId),
-        listening: getUserStorageKey(baseKeys.listening, userId),
-        speaking: getUserStorageKey(baseKeys.speaking, userId)
+        reading: getUserStorageKey(MODULE_BASE_KEYS.reading, userId),
+        writing: getUserStorageKey(MODULE_BASE_KEYS.writing, userId),
+        listening: getUserStorageKey(MODULE_BASE_KEYS.listening, userId),
+        speaking: getUserStorageKey(MODULE_BASE_KEYS.speaking, userId),
+        fullTest: getUserStorageKey(MODULE_BASE_KEYS.fullTest, userId),
     };
 }
 
@@ -80,12 +128,14 @@ export function getAllProgressData(userId = null) {
     const writingHistory = loadHistory(storageKeys.writing);
     const listeningHistory = loadHistory(storageKeys.listening);
     const speakingHistory = loadHistory(storageKeys.speaking);
+    const fullTestHistory = loadHistory(storageKeys.fullTest);
 
     return {
         reading: readingHistory,
         writing: writingHistory,
         listening: listeningHistory,
-        speaking: speakingHistory
+        speaking: speakingHistory,
+        fullTest: fullTestHistory,
     };
 }
 
@@ -94,19 +144,14 @@ export function getAllProgressData(userId = null) {
  */
 export function getStorageKeyForModule(module, userId = null) {
     const currentUserId = userId || getUserId();
-    const baseKeys = {
-        reading: "ielts-reading-history",
-        writing: "ielts-writing-history",
-        listening: "ielts-listening-history",
-        speaking: "ielts-speaking-history"
-    };
-    
-    if (!baseKeys[module]) {
+    const baseKey = MODULE_BASE_KEYS[module];
+
+    if (!baseKey) {
         console.warn(`Unknown module: ${module}`);
         return null;
     }
-    
-    return getUserStorageKey(baseKeys[module], currentUserId);
+
+    return getUserStorageKey(baseKey, currentUserId);
 }
 
 /**
@@ -162,7 +207,7 @@ export function getOverallStats(userId = null) {
     const readingBands = calculateBandScores(progress.reading);
     const writingBands = calculateBandScores(progress.writing);
     const listeningBands = calculateBandScores(progress.listening);
-    const speakingBands = calculateBandScores(progress.speaking.map(e => ({ band: e.bandScore || 0 })));
+    const speakingBands = calculateBandScores(progress.speaking);
 
     // Calculate overall band
     const moduleBands = [
@@ -210,8 +255,8 @@ export function getRecentActivity(limit = 10, userId = null) {
     progress.reading.slice(0, limit).forEach(entry => {
         activities.push({
             type: "Reading Test",
-            score: parseFloat(entry.band) || 0,
-            time: entry.submittedAt,
+            score: getModuleBand(entry, "reading"),
+            time: getEntryDate(entry),
             icon: "📖",
             color: "blue",
             module: "reading"
@@ -224,8 +269,8 @@ export function getRecentActivity(limit = 10, userId = null) {
             type: entry.taskId === "task1-academic" || entry.taskId === "task1-general" 
                 ? "Writing Task 1" 
                 : "Writing Task 2",
-            score: parseFloat(entry.overallBand) || 0,
-            time: entry.submittedAt,
+            score: getModuleBand(entry, "writing"),
+            time: getEntryDate(entry),
             icon: "✍️",
             color: "purple",
             module: "writing"
@@ -236,8 +281,8 @@ export function getRecentActivity(limit = 10, userId = null) {
     progress.listening.slice(0, limit).forEach(entry => {
         activities.push({
             type: "Listening Test",
-            score: parseFloat(entry.band) || 0,
-            time: entry.submittedAt,
+            score: getModuleBand(entry, "listening"),
+            time: getEntryDate(entry),
             icon: "👂",
             color: "orange",
             module: "listening"
@@ -247,12 +292,24 @@ export function getRecentActivity(limit = 10, userId = null) {
     // Speaking activities
     progress.speaking.slice(0, limit).forEach(entry => {
         activities.push({
-            type: entry.type === 'realtime_practice' ? "Speaking Practice (Real-time)" : "Speaking Practice",
-            score: parseFloat(entry.bandScore || 0),
-            time: entry.submittedAt,
+            type: getSpeakingTypeLabel(entry),
+            score: getSpeakingBand(entry),
+            time: getEntryDate(entry),
             icon: "🎙️",
             color: "green",
             module: "speaking"
+        });
+    });
+
+    // Full test activities
+    (progress.fullTest || []).slice(0, limit).forEach(entry => {
+        activities.push({
+            type: "Full Test Simulation",
+            score: parseFloat(entry.overallBand || 0),
+            time: getEntryDate(entry),
+            icon: "📝",
+            color: "indigo",
+            module: "fullTest"
         });
     });
 
@@ -291,20 +348,18 @@ function formatTimeAgo(dateString) {
 export function getStatsSummary(userId = null) {
     const progress = getAllProgressData(userId);
     
-    const totalTests = progress.reading.length + progress.writing.length + progress.listening.length + progress.speaking.length;
-    
+    const allEntries = getAllPracticeEntries(progress);
+    const totalTests = allEntries.length;
+
     // Calculate weekly change (tests in last 7 days)
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
-    
-    const weeklyTests = [
-        ...progress.reading,
-        ...progress.writing,
-        ...progress.listening,
-        ...progress.speaking
-    ].filter(entry => {
-        const entryDate = new Date(entry.submittedAt);
-        return entryDate >= weekAgo;
+
+    const weeklyTests = allEntries.filter(entry => {
+        const dateStr = getEntryDate(entry);
+        if (!dateStr) return false;
+        const entryDate = new Date(dateStr);
+        return !isNaN(entryDate.getTime()) && entryDate >= weekAgo;
     }).length;
 
     // Calculate study hours (estimate: 1 hour per test)
@@ -312,12 +367,7 @@ export function getStatsSummary(userId = null) {
     const weeklyHours = Math.round(weeklyTests * 1.2);
 
     // Calculate streak (consecutive days with at least one test)
-    const streakDays = calculateStreak([
-        ...progress.reading,
-        ...progress.writing,
-        ...progress.listening,
-        ...progress.speaking
-    ]);
+    const streakDays = calculateStreak(allEntries);
 
     return {
         testsCompleted: totalTests,
@@ -337,9 +387,12 @@ function calculateStreak(entries) {
     
     const dates = entries
         .map(e => {
-            const date = new Date(e.submittedAt);
-            return date.toDateString();
+            const dateStr = getEntryDate(e);
+            if (!dateStr) return null;
+            const date = new Date(dateStr);
+            return isNaN(date.getTime()) ? null : date.toDateString();
         })
+        .filter(Boolean)
         .filter((date, index, self) => self.indexOf(date) === index)
         .sort((a, b) => new Date(b) - new Date(a));
 
@@ -392,18 +445,19 @@ export function getBandProgress(timeframe = '3months', userId = null) {
         ...progress.reading.map(e => ({ ...e, module: 'reading' })),
         ...progress.writing.map(e => ({ ...e, module: 'writing' })),
         ...progress.listening.map(e => ({ ...e, module: 'listening' })),
-        ...progress.speaking.map(e => ({ ...e, module: 'speaking', band: e.bandScore || 0 }))
+        ...progress.speaking.map(e => ({ ...e, module: 'speaking', band: getSpeakingBand(e) })),
+        ...(progress.fullTest || []).map(e => ({ ...e, module: 'fullTest', band: e.overallBand || 0 })),
     ].filter(e => {
-        const submittedAt = e.submittedAt || e.completedAt || e.date;
-        if (!submittedAt) return false;
-        const entryDate = new Date(submittedAt);
+        const dateStr = getEntryDate(e);
+        if (!dateStr) return false;
+        const entryDate = new Date(dateStr);
         return !isNaN(entryDate.getTime()) && entryDate >= startDate;
-    }).sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
+    }).sort((a, b) => new Date(getEntryDate(a)) - new Date(getEntryDate(b)));
 
     // Group by month
     const monthlyData = {};
     allEntries.forEach(entry => {
-        const date = new Date(entry.submittedAt);
+        const date = new Date(getEntryDate(entry));
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         const monthLabel = date.toLocaleDateString('en-US', { month: 'short' });
 
@@ -413,24 +467,16 @@ export function getBandProgress(timeframe = '3months', userId = null) {
                 reading: [],
                 writing: [],
                 listening: [],
-                speaking: []
+                speaking: [],
+                fullTest: [],
             };
         }
 
-        // Handle different band formats for different modules
-        let band = 0;
-        if (entry.module === 'reading') {
-            band = parseFloat(entry.band || 0);
-        } else if (entry.module === 'writing') {
-            band = parseFloat(entry.overallBand || 0);
-        } else if (entry.module === 'listening') {
-            band = parseFloat(entry.band || 0);
-        } else if (entry.module === 'speaking') {
-            band = parseFloat(entry.band || entry.bandScore || 0);
-        }
+        const band = getModuleBand(entry, entry.module);
+        const moduleKey = entry.module === "fullTest" ? "fullTest" : entry.module;
 
-        if (band > 0) {
-            monthlyData[monthKey][entry.module].push(band);
+        if (band > 0 && monthlyData[monthKey][moduleKey]) {
+            monthlyData[monthKey][moduleKey].push(band);
         }
     });
 
@@ -444,8 +490,9 @@ export function getBandProgress(timeframe = '3months', userId = null) {
         const writing = calcAvg(data.writing);
         const listening = calcAvg(data.listening);
         const speaking = calcAvg(data.speaking);
+        const fullTest = calcAvg(data.fullTest);
 
-        const moduleBands = [reading, writing, listening, speaking].filter(b => b > 0);
+        const moduleBands = [reading, writing, listening, speaking, fullTest].filter(b => b > 0);
         const overall = moduleBands.length > 0
             ? moduleBands.reduce((sum, b) => sum + b, 0) / moduleBands.length
             : 0;
@@ -492,12 +539,7 @@ function getStartDateForTimeframe(timeframe) {
  */
 export function getWeeklyTests(userId = null, timeframe = null) {
     const progress = getAllProgressData(userId);
-    let allEntries = [
-        ...progress.reading,
-        ...progress.writing,
-        ...progress.listening,
-        ...progress.speaking
-    ];
+    let allEntries = getAllPracticeEntries(progress);
 
     if (timeframe) {
         const startDate = getStartDateForTimeframe(timeframe);
@@ -543,7 +585,7 @@ export function getModuleBreakdown(userId = null) {
     const progress = getAllProgressData(userId);
 
     const readingBands = progress.reading
-        .map(e => parseFloat(e.band || 0))
+        .map(e => getModuleBand(e, "reading"))
         .filter(b => b > 0);
     
     const writingBands = progress.writing
@@ -555,7 +597,7 @@ export function getModuleBreakdown(userId = null) {
         .filter(b => b > 0);
 
     const speakingBands = progress.speaking
-        .map(e => parseFloat(e.bandScore || 0))
+        .map(e => getSpeakingBand(e))
         .filter(b => b > 0);
 
     const readingAvg = readingBands.length > 0
@@ -651,9 +693,9 @@ export function getPracticeHistory(limit = 20, timeframeOrUserId = null, userIdP
 
     progress.reading.forEach(entry => {
         pushEntry(entry, {
-            date: entry.submittedAt,
+            date: getEntryDate(entry),
             type: 'Reading Test',
-            band: parseFloat(entry.band || 0),
+            band: getModuleBand(entry, "reading"),
             duration: '60 min',
             feedback: `Correct: ${entry.correctCount || 0}/${entry.totalQuestions || 0}`
         });
@@ -681,16 +723,43 @@ export function getPracticeHistory(limit = 20, timeframeOrUserId = null, userIdP
 
     progress.speaking.forEach(entry => {
         pushEntry(entry, {
-            date: entry.submittedAt,
-            type: entry.type === 'realtime_practice' ? 'Speaking Practice (Real-time)' : 'Speaking Practice',
-            band: parseFloat(entry.bandScore || 0),
+            date: getEntryDate(entry),
+            type: getSpeakingTypeLabel(entry),
+            band: getSpeakingBand(entry),
             duration: entry.type === 'realtime_practice' ? '15 min' : '2 min',
-            feedback: entry.type === 'realtime_practice' ? 'Real-time conversation' : 'Recorded response'
+            feedback: entry.type === 'realtime_practice' ? 'Voice conversation' : 'Recorded response'
+        });
+    });
+
+    (progress.fullTest || []).forEach(entry => {
+        pushEntry(entry, {
+            date: getEntryDate(entry),
+            type: 'Full Test Simulation',
+            band: parseFloat(entry.overallBand || 0),
+            duration: `${Math.max(1, Math.round((entry.totalTime || 10200) / 60))} min`,
+            feedback: 'Complete IELTS simulation'
         });
     });
 
     return allEntries
         .sort((a, b) => new Date(b.date) - new Date(a.date))
         .slice(0, limit);
+}
+
+/**
+ * Count practice sessions completed in the current calendar month
+ */
+export function getMonthlyTestCount(userId = null) {
+    const progress = getAllProgressData(userId);
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    return getAllPracticeEntries(progress).filter((entry) => {
+        const dateStr = getEntryDate(entry);
+        if (!dateStr) return false;
+        const entryDate = new Date(dateStr);
+        return !isNaN(entryDate.getTime()) && entryDate >= monthStart;
+    }).length;
 }
 
