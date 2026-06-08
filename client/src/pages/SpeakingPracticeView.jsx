@@ -35,12 +35,6 @@ function saveHistory(entries, userId) {
     window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
-function saveHistory(entries, userId) {
-    if (typeof window === "undefined") return;
-    const key = getStorageKey(userId);
-    window.localStorage.setItem(key, JSON.stringify(entries));
-}
-
 function VoiceSessionSummary({ summary, onClose }) {
     if (!summary) return null;
     const { bandScore, scores, summary: s, capReasons, transcript, wordCount, durationSec } = summary;
