@@ -13,6 +13,7 @@ const {
   countWords,
   summariseStrengthsWeaknesses,
 } = require("../services/scoringService");
+const { buildIeltsSpeakingScoringSystemPrompt, buildExamSetupSystemPrompt } = require("../constants/ieltsSpeakingExam");
 const { createRealtimeClientSecret, connectRealtimeCall } = require("../services/realtimeSessionService");
 
 const router = express.Router();
@@ -903,7 +904,9 @@ router.post("/realtime/continue", async (req, res) => {
           role: "system",
           content: `You are a professional IELTS Speaking examiner conducting a dynamic practice session. 
 
-CRITICAL: You must READ and UNDERSTAND what the user actually said, then respond SPECIFICALLY to their message. Do NOT use generic phrases like "That's interesting! Can you tell me more about that?" 
+ENGLISH ONLY: Never use Hindi, Urdu, or any language other than English. All replies must be in English.
+
+CRITICAL: You must READ and UNDERSTAND what the user actually said, then respond SPECIFICALLY to their message. 
 
 Your role:
 - READ the user's message carefully and understand what they actually said
@@ -1175,42 +1178,7 @@ router.post("/realtime/end", async (req, res) => {
       .map((p, i) => `Q${i + 1}: ${p.question}\nA${i + 1}: ${p.answer || "(no answer)"}`)
       .join("\n\n");
 
-    const systemPrompt = `You are a strict, fair IELTS Speaking examiner scoring a candidate based ONLY on the transcript of a real-time conversation. Use the official IELTS band descriptors. Return ONLY JSON — no markdown, no commentary.
-
-JSON SCHEMA:
-{
-  "scores": {
-    "fluency":       <0-9 in 0.5 steps>,
-    "lexical":       <0-9 in 0.5 steps>,
-    "grammar":       <0-9 in 0.5 steps>,
-    "pronunciation": <0-9 in 0.5 steps>
-  },
-  "feedback": {
-    "fluency":       "<1-2 sentences>",
-    "lexical":       "<1-2 sentences>",
-    "grammar":       "<1-2 sentences>",
-    "pronunciation": "<1-2 sentences>"
-  },
-  "strengths":   ["<2-3 specific strengths>"],
-  "weaknesses":  ["<2-3 specific weaknesses>"],
-  "suggestions": ["<3-5 concrete suggestions>"],
-  "commonGrammarMistakes":   ["<2-4 specific grammar errors the candidate made>"],
-  "vocabularyImprovements":  ["<2-4 vocabulary upgrades tied to what they said>"],
-  "pronunciationAdvice":     ["<2-3 generic pronunciation tips>"],
-  "flags": {
-    "relevant":         <true if answers actually addressed the examiner's questions>,
-    "relevance_reason": "<short reason or empty>",
-    "meaningful":       <true if the responses are meaningful>,
-    "sufficient":       <true if there is enough content to assess fairly>
-  }
-}
-
-STRICT RULES — these prevent unfair high bands:
-- One/two-word answers, partial sentences, or off-topic replies CANNOT score above band 4 on Fluency or Lexical.
-- If the candidate spoke fewer than ~30 total words, ALL four scores must be ≤ 4.
-- If answers don't address the questions, set relevant=false and keep Fluency/Lexical ≤ 4.
-- Pronunciation must be conservative (no audio is available) — cap at 7 unless the transcript reads as perfectly fluent native English.
-- Reference SPECIFIC things the candidate actually said; never write generic templates.`;
+    const systemPrompt = buildIeltsSpeakingScoringSystemPrompt({ contextLabel: 'real-time voice session' });
 
     const userPrompt = `Candidate-only word count: ${totalWordCount}.
 Candidate-only speaking duration: ${Math.round(totalDurationSec)}s.
@@ -1332,6 +1300,9 @@ Return the JSON exactly per the schema. Be strict.`;
     const pronunciationAdvice = Array.isArray(aiResult?.pronunciationAdvice)
       ? aiResult.pronunciationAdvice.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
       : [];
+    const examinerFeedback = typeof aiResult?.examinerFeedback === "string" && aiResult.examinerFeedback.trim()
+      ? aiResult.examinerFeedback.trim()
+      : null;
 
     const parts = [];
     parts.push(
@@ -1365,7 +1336,9 @@ Return the JSON exactly per the schema. Be strict.`;
         reasonForScore,
         strengths,
         weaknesses,
+        areasForImprovement: weaknesses,
         suggestions,
+        examinerFeedback,
         commonGrammarMistakes,
         vocabularyImprovements,
         pronunciationAdvice,
@@ -1420,46 +1393,9 @@ router.post("/exam/setup", async (req, res) => {
 
     const sessionId = `exam_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    const systemPrompt = `You are a professional IELTS Speaking examiner generating a COMPLETE Speaking test that mirrors the real Cambridge IELTS Speaking exam exactly. Return ONLY valid JSON — no commentary, no markdown.
+    const systemPrompt = buildExamSetupSystemPrompt();
 
-REAL IELTS STRUCTURE
-- Part 1 (Introduction & Interview, 4-5 min): 8-12 short personal questions on 2-3 familiar topics (hometown, work/study, hobbies, family, daily life, food, travel, etc.). Start with 2 fixed-style questions: introducing themselves + where they live. Then cover 2-3 topic blocks of 3-4 questions each.
-- Part 2 (Cue Card, 3-4 min): a single cue card on a person / place / event / object / experience. Cue card title MUST be in the form "Describe ...". Include EXACTLY 3-4 "You should say" bullet points and one final prompt sentence ("and explain why ...").
-- Part 3 (Discussion, 4-5 min): 5-7 abstract discussion questions DIRECTLY linked to the cue card topic (broader, more analytical — comparisons, future trends, societal impact, opinions). They must clearly relate to the cue card topic.
-
-OUTPUT JSON SCHEMA (use these exact keys):
-{
-  "topic": "<one short phrase describing the overall thematic area>",
-  "part1": {
-    "questions": [
-      "What is your full name?",
-      "Where are you from?",
-      "<8-10 more Part 1 questions>"
-    ]
-  },
-  "part2": {
-    "cueCard": {
-      "title": "Describe ...",
-      "points": ["<point 1>", "<point 2>", "<point 3>", "<optional point 4>"],
-      "finalPrompt": "and explain why ..."
-    }
-  },
-  "part3": {
-    "questions": [
-      "<question 1>",
-      "<5-6 more abstract discussion questions related to the cue card topic>"
-    ]
-  }
-}
-
-Rules:
-- Part 1 must contain BETWEEN 8 AND 12 questions, all short, conversational, present-tense focused.
-- Part 2 cue card MUST be a "Describe …" prompt with 3-4 bullets and a final "and explain …" sentence.
-- Part 3 must contain BETWEEN 5 AND 7 questions, all clearly tied to the cue card topic.
-- Questions must be natural spoken English. No question may begin with "Why don't you tell me…" or other filler.
-- Do NOT include answers, hints, or any examiner commentary.`;
-
-    const userPrompt = `Generate one complete IELTS Speaking test. Pick a fresh, varied topic (avoid the most overused topics like "your hometown" as the cue card — that can appear in Part 1 instead). Return JSON only.`;
+    const userPrompt = `Generate one complete official IELTS Speaking test. Pick a varied Part 2 topic type (Travel, Person, Event, Experience, Hobby, Achievement, Place, Technology, Education, or Culture). Use Part 1 familiar topics from the allowed pool. Return JSON only.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -1583,6 +1519,17 @@ router.post("/exam/score", async (req, res) => {
       });
     }
 
+    const part2FollowUps = Array.isArray(part2?.followUpAnswers) ? part2.followUpAnswers : [];
+    part2FollowUps.forEach((a, i) => {
+      combinedAnswers.push({
+        part: 2,
+        index: i + 1,
+        question: a?.question || `Part 2 follow-up ${i + 1}`,
+        transcript: String(a?.transcript || "").trim(),
+        durationSec: Number(a?.durationSec) || 0,
+      });
+    });
+
     part3Answers.forEach((a, i) => {
       combinedAnswers.push({
         part: 3,
@@ -1649,41 +1596,7 @@ router.post("/exam/score", async (req, res) => {
     }
 
     // AI examination across the entire exam transcript
-    const systemPrompt = `You are a senior IELTS Speaking examiner. The candidate has just completed a FULL 3-part IELTS Speaking test. Score them strictly using the official IELTS Speaking band descriptors based ONLY on the combined transcript.
-
-Return ONLY JSON with this exact schema (no markdown, no commentary):
-{
-  "scores": {
-    "fluency":       <0-9 in 0.5 steps>,
-    "lexical":       <0-9 in 0.5 steps>,
-    "grammar":       <0-9 in 0.5 steps>,
-    "pronunciation": <0-9 in 0.5 steps>
-  },
-  "feedback": {
-    "fluency":       "<1-2 sentences>",
-    "lexical":       "<1-2 sentences>",
-    "grammar":       "<1-2 sentences>",
-    "pronunciation": "<1-2 sentences>"
-  },
-  "strengths":   ["<2-3 specific strengths>"],
-  "weaknesses":  ["<2-3 specific weaknesses>"],
-  "suggestions": ["<3-5 concrete suggestions>"],
-  "commonGrammarMistakes":   ["<2-4 specific grammar errors the candidate made>"],
-  "vocabularyImprovements":  ["<2-4 vocabulary upgrade suggestions tied to the topic>"],
-  "pronunciationAdvice":     ["<2-3 generic pronunciation tips based on likely L2 features>"],
-  "flags": {
-    "relevant":         <true if answers actually addressed the questions>,
-    "relevance_reason": "<short reason or empty>",
-    "meaningful":       <true if the response is meaningful>,
-    "sufficient":       <true if there is enough content for IELTS assessment>
-  }
-}
-
-Strict rules:
-- If responses are OFF-TOPIC, set relevant=false and DO NOT give Fluency or Lexical above 5.
-- If the candidate gives only one-word or very short answers throughout, lower Fluency, Lexical and Grammar accordingly.
-- Reference SPECIFIC things the candidate actually said in strengths/weaknesses/suggestions; do not write generic templates.
-- Pronunciation must be estimated conservatively (you cannot hear audio); base it on punctuation/transcription clarity and avoid giving above 7 from text alone unless transcript is perfectly fluent.`;
+    const systemPrompt = buildIeltsSpeakingScoringSystemPrompt({ contextLabel: 'exam' });
 
     const transcriptForAI = combinedAnswers
       .map((a) => `[Part ${a.part}] Q: ${a.question}\nA (${a.durationSec | 0}s): ${a.transcript || "(no answer)"}`)
@@ -1811,6 +1724,9 @@ Return the JSON exactly per the schema. Be strict.`;
     const pronunciationAdvice = Array.isArray(aiResult?.pronunciationAdvice)
       ? aiResult.pronunciationAdvice.filter((s) => typeof s === "string" && s.trim()).slice(0, 4)
       : [];
+    const examinerFeedback = typeof aiResult?.examinerFeedback === "string" && aiResult.examinerFeedback.trim()
+      ? aiResult.examinerFeedback.trim()
+      : null;
 
     const reasonForScore = buildExamReason({
       overallBand,
@@ -1842,7 +1758,9 @@ Return the JSON exactly per the schema. Be strict.`;
         reasonForScore,
         strengths,
         weaknesses,
+        areasForImprovement: weaknesses,
         suggestions,
+        examinerFeedback,
         commonGrammarMistakes,
         vocabularyImprovements,
         pronunciationAdvice,
@@ -1903,7 +1821,7 @@ function normaliseExamPayload(parsed) {
     ];
     while (safePart1.length < 8 && filler.length) safePart1.push(filler.shift());
   }
-  let safePart3 = part3Questions.slice(0, 7);
+  let safePart3 = part3Questions.slice(0, 8);
   if (safePart3.length < 5) {
     const filler = [
       "How is this topic changing in modern society?",
@@ -1928,10 +1846,20 @@ function normaliseExamPayload(parsed) {
     cueCard.points = ["who the person is", "how you know them", "what they have done"];
   }
 
+  let followUpQuestions = Array.isArray(parsed?.part2?.followUpQuestions)
+    ? parsed.part2.followUpQuestions.filter((q) => typeof q === "string" && q.trim()).map((q) => q.trim()).slice(0, 2)
+    : [];
+  if (followUpQuestions.length < 1) {
+    followUpQuestions = [
+      "Did you enjoy talking about this topic?",
+      "Would you like to experience something similar again?",
+    ].slice(0, 2);
+  }
+
   return {
     topic: typeof parsed?.topic === "string" && parsed.topic.trim() ? parsed.topic.trim() : "general IELTS topic",
     part1: { questions: safePart1 },
-    part2: { cueCard },
+    part2: { cueCard, followUpQuestions },
     part3: { questions: safePart3 },
   };
 }
@@ -1961,6 +1889,10 @@ function buildExamFallback() {
         ],
         finalPrompt: "and explain why this person has inspired you.",
       },
+      followUpQuestions: [
+        "Would you like to meet this person again?",
+        "Do you think others would find this person inspiring too?",
+      ],
     },
     part3: {
       questions: [

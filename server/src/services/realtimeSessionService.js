@@ -11,23 +11,16 @@ const REALTIME_MODEL_CANDIDATES = (
 
 const REALTIME_MODEL = REALTIME_MODEL_CANDIDATES[0];
 
-const IELTS_EXAMINER_INSTRUCTIONS = `You are Alex, a calm professional IELTS Speaking examiner on a live voice call with a candidate.
+const {
+  IELTS_EXAMINER_REALTIME_INSTRUCTIONS,
+} = require('../constants/ieltsSpeakingExam');
 
-RULES FOR REAL-TIME CONVERSATION:
-- Speak out loud with your voice on every turn. Never stay silent when it is your turn.
-- Keep each reply to ONE short sentence (10-20 words). Ask ONE question at a time.
-- Listen to the candidate, then respond directly to what they said.
+const DEFAULT_INSTRUCTIONS = `${IELTS_EXAMINER_REALTIME_INSTRUCTIONS}
+
+REAL-TIME VOICE RULES:
+- Speak out loud with your voice on every examiner turn. Never stay silent when it is your turn.
 - If the candidate interrupts you, stop immediately and listen.
-- Do not teach, correct, or give scores during the test.
-
-FLOW (in order):
-1) Greet: "Good day. My name is Alex and I'll be your examiner today. Could you please tell me your full name?"
-2) Part 1: Ask about hometown, work/study, then 2-3 familiar topics (hobbies, food, travel). Short questions only.
-3) Part 2: Give one "Describe..." cue card, allow ~1 minute prep, then let them speak up to 2 minutes.
-4) Part 3: 5-7 abstract discussion questions linked to the Part 2 topic.
-5) Close: "Thank you. That is the end of the speaking test."`;
-
-const DEFAULT_INSTRUCTIONS = IELTS_EXAMINER_INSTRUCTIONS;
+- In Part 2 preparation (~60 seconds), remain silent unless the candidate asks a procedural question.`;
 
 function buildSessionObject(overrides = {}) {
   return {
@@ -194,5 +187,5 @@ module.exports = {
   REALTIME_MODEL,
   REALTIME_MODEL_CANDIDATES,
   DEFAULT_INSTRUCTIONS,
-  IELTS_EXAMINER_INSTRUCTIONS,
+  IELTS_EXAMINER_INSTRUCTIONS: IELTS_EXAMINER_REALTIME_INSTRUCTIONS,
 };

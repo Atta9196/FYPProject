@@ -10,7 +10,6 @@ import {
 } from "../services/api/generationCacheApi";
 import MicButton from "../features/speaking/components/MicButton";
 import { VoiceConversation } from "../features/speaking/components/VoiceConversation";
-import { IeltsExamSimulator } from "../features/speaking/exam/IeltsExamSimulator";
 
 function getStorageKey(userId) {
     return getStorageKeyForModule('speaking', userId) || "ielts-speaking-history";
@@ -36,159 +35,11 @@ function saveHistory(entries, userId) {
     window.localStorage.setItem(key, JSON.stringify(entries));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Boxed feedback shown after a Realtime Voice session ends.
-// Mirrors the IELTS Exam result layout: one big overall band card, four
-// criteria boxes, strengths / weaknesses / suggestions cards, plus optional
-// grammar / vocabulary / pronunciation tips and a "why this score" line.
-// ─────────────────────────────────────────────────────────────────────────────
-function VoiceSessionSummary({ summary, onClose }) {
-    if (!summary) return null;
-    const { bandScore, scores, feedback, summary: s, capReasons, transcript, wordCount, durationSec } = summary;
-    const bandDisplay = typeof bandScore === "number" ? bandScore.toFixed(1) : "--";
-    const noSpeech = (wordCount ?? 0) === 0 && (durationSec ?? 0) < 1;
-    const criteria = [
-        { key: "fluency", label: "Fluency & Coherence" },
-        { key: "lexical", label: "Lexical Resource" },
-        { key: "grammar", label: "Grammatical Range & Accuracy" },
-        { key: "pronunciation", label: "Pronunciation" },
-    ];
-
-    const ToneCard = ({ title, items, tone, fallback }) => {
-        const ring = {
-            emerald: "border-emerald-200 bg-emerald-50/70 text-emerald-900",
-            rose: "border-rose-200 bg-rose-50/70 text-rose-900",
-            sky: "border-sky-200 bg-sky-50/70 text-sky-900",
-            violet: "border-violet-200 bg-violet-50/70 text-violet-900",
-            amber: "border-amber-200 bg-amber-50/70 text-amber-900",
-            indigo: "border-indigo-200 bg-indigo-50/70 text-indigo-900",
-        }[tone] || "border-slate-200 bg-slate-50/70 text-slate-900";
-        const list = Array.isArray(items) ? items.filter((i) => typeof i === "string" && i.trim()) : [];
-        return (
-            <div className={`rounded-2xl border ${ring} p-4`}>
-                <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{title}</p>
-                {list.length > 0 ? (
-                    <ul className="mt-2 space-y-1 text-sm">
-                        {list.map((it, i) => <li key={i}>• {it}</li>)}
-                    </ul>
-                ) : (
-                    <p className="mt-2 text-sm opacity-70">{fallback || "Nothing specific to highlight."}</p>
-                )}
-            </div>
-        );
-    };
-
-    return (
-        <div className="space-y-5">
-            {noSpeech && (
-                <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:p-5 shadow-sm">
-                    <p className="text-sm font-semibold text-amber-900">
-                        ⚠️ No speech was captured from your microphone.
-                    </p>
-                    <p className="text-xs text-amber-800 mt-1.5 leading-relaxed">
-                        That&apos;s why the band shows 0. Most often this means the browser couldn&apos;t hear you.
-                        Please check:
-                    </p>
-                    <ul className="mt-2 text-xs text-amber-800 space-y-1 list-disc list-inside">
-                        <li>The microphone icon in your browser&apos;s address bar shows &quot;Allowed&quot;.</li>
-                        <li>You are not muted in your operating system (volume mixer / system tray).</li>
-                        <li>The correct input device is selected (headset vs. built-in mic).</li>
-                        <li>Speak clearly and a little louder — watch the green mic level bar move while you talk.</li>
-                        <li>Start a new session and answer the examiner with full sentences (not one word).</li>
-                    </ul>
-                </div>
-            )}
-            <div className="bg-white rounded-2xl shadow p-5 sm:p-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-center border border-slate-200">
-                <div className="md:col-span-2 text-center md:text-left">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">Overall Speaking Band</p>
-                    <p className="text-5xl font-extrabold text-emerald-600">{bandDisplay}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                        {wordCount ?? 0} spoken words across {Math.round(durationSec || 0)}s
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1">Saved to dashboard & performance history.</p>
-                </div>
-                <div className="md:col-span-3 grid grid-cols-2 gap-2">
-                    {criteria.map((c) => (
-                        <div key={c.key} className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
-                            <p className="text-[11px] text-slate-500 uppercase tracking-wide">{c.label}</p>
-                            <p className="text-xl font-bold text-slate-800">
-                                {scores?.[c.key] != null ? Number(scores[c.key]).toFixed(1) : "—"}
-                                <span className="text-xs text-slate-400 font-normal"> / 9</span>
-                            </p>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {s?.reasonForScore && (
-                <div className="bg-white rounded-2xl shadow p-5 text-sm text-slate-700 border border-slate-200">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Why this score?
-                    </p>
-                    <p className="mt-1">{s.reasonForScore}</p>
-                    {Array.isArray(capReasons) && capReasons.length > 0 && (
-                        <ul className="mt-2 space-y-1 text-xs text-amber-700">
-                            {capReasons.map((r) => <li key={r}>⚠ {r}</li>)}
-                        </ul>
-                    )}
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <ToneCard title="Strengths" items={s?.strengths} tone="emerald" />
-                <ToneCard title="Weaknesses" items={s?.weaknesses} tone="rose" />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <ToneCard title="Suggestions" items={s?.suggestions} tone="sky" />
-                <ToneCard title="Common Grammar Mistakes" items={s?.commonGrammarMistakes} tone="violet" fallback="No specific patterns flagged." />
-                <ToneCard title="Vocabulary Improvements" items={s?.vocabularyImprovements} tone="amber" fallback="No specific upgrades suggested." />
-            </div>
-
-            <ToneCard title="Pronunciation Advice" items={s?.pronunciationAdvice} tone="indigo" fallback="No specific pronunciation notes." />
-
-            {feedback && (
-                <div className="bg-white rounded-2xl shadow p-5 border border-slate-200 space-y-2">
-                    <p className="text-sm font-semibold text-slate-800">Per-criterion feedback</p>
-                    {Object.entries(feedback)
-                        .filter(([k]) => k !== "bandScore")
-                        .map(([k, text]) => (
-                            <div key={k} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                                <p className="text-[11px] uppercase tracking-wide text-slate-500">{k}</p>
-                                <p className="text-sm text-slate-700 mt-1">{text}</p>
-                            </div>
-                        ))}
-                </div>
-            )}
-
-            {transcript && (
-                <div className="bg-white rounded-2xl shadow p-5 border border-slate-200">
-                    <p className="text-sm font-semibold text-slate-800 mb-2">Your full transcript</p>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                        {transcript}
-                    </div>
-                </div>
-            )}
-
-            {onClose && (
-                <div className="flex justify-end">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-semibold hover:bg-slate-200 border border-slate-200"
-                    >
-                        Close feedback
-                    </button>
-                </div>
-            )}
-        </div>
-    );
-}
-
 export function SpeakingPracticeView({ embedded = false, onReady }) {
     const { user } = useAuth();
+    const voiceConversationRef = useRef(null);
     // Mode selection state
-    const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', 'voice', or 'exam'
+    const [selectedMode, setSelectedMode] = useState(null); // 'record', 'realtime', or 'voice'
     
     // Record & Submit mode state
     const [isRecording, setIsRecording] = useState(false);
@@ -209,10 +60,6 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     const [isTyping, setIsTyping] = useState(false);
     const [streamingMessage, setStreamingMessage] = useState("");
     const [sessionFeedback, setSessionFeedback] = useState(null);
-
-    // Voice conversation summary (band + feedback)
-    const [voiceSessionSummary, setVoiceSessionSummary] = useState(null);
-    const [isVoiceEvaluating, setIsVoiceEvaluating] = useState(false);
     
     // Refs
     const mediaRecorderRef = useRef(null);
@@ -234,6 +81,13 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
             conversationEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [conversationHistory]);
+
+    // Stop voice session when leaving voice mode or unmounting the page section.
+    useEffect(() => {
+        if (selectedMode !== 'voice') {
+            voiceConversationRef.current?.stopSession?.();
+        }
+    }, [selectedMode]);
 
     // Timer effect for recording
     useEffect(() => {
@@ -589,105 +443,6 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
         }
     };
 
-    // End real-time voice session (voice mode) via callback from VoiceConversation.
-    // The new /realtime/end endpoint returns a full IELTS scoring payload
-    // (4 criteria, caps applied, structured summary) — same shape as the
-    // IELTS Exam Simulation endpoint — so we just store the whole thing.
-    const handleVoiceSessionEnd = async ({
-        sessionId,
-        conversationHistory,
-        userSpeakingDurationSec,
-    }) => {
-        try {
-            setIsVoiceEvaluating(true);
-            const response = await fetch(
-                'https://ielts-coach-backend.onrender.com/api/speaking/realtime/end',
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        sessionId,
-                        conversationHistory,
-                        userSpeakingDurationSec,
-                        userId: user?.email || user?.id || 'current-user',
-                    }),
-                }
-            );
-
-            const data = await response.json();
-
-            if (data.success) {
-                const bandScore =
-                    typeof data.bandScore === 'number' && !Number.isNaN(data.bandScore)
-                        ? data.bandScore
-                        : 0;
-
-                setVoiceSessionSummary({
-                    bandScore,
-                    band: bandScore,
-                    scores: data.scores || null,
-                    feedback: data.feedback || null,
-                    summary: data.summary || null,
-                    capReasons: Array.isArray(data.capReasons) ? data.capReasons : [],
-                    penalties: data.penalties || {},
-                    flags: data.flags || null,
-                    transcript: data.transcript || '',
-                    wordCount: data.wordCount ?? 0,
-                    durationSec: data.durationSec ?? 0,
-                });
-
-                // Save to localStorage for dashboard / performance integration
-                const historyEntry = {
-                    id: Date.now(),
-                    sessionId,
-                    conversationHistory,
-                    feedback: data.feedback,
-                    bandScore,
-                    band: bandScore,
-                    scores: data.scores,
-                    summary: data.summary,
-                    wordCount: data.wordCount,
-                    durationSec: data.durationSec,
-                    submittedAt: new Date().toISOString(),
-                    type: 'realtime_practice',
-                };
-
-                const userId = user?.email || user?.id || null;
-                const existingHistory = loadHistory(userId);
-                const updatedHistory = [historyEntry, ...existingHistory].slice(0, 20);
-                saveHistory(updatedHistory, userId);
-
-                window.dispatchEvent(new Event('progressUpdated'));
-            } else {
-                console.error('Failed to end voice session:', data.error);
-                setVoiceSessionSummary({
-                    bandScore: 0,
-                    summary: {
-                        reasonForScore:
-                            data.error || 'Could not score this session. Please try again.',
-                        strengths: [],
-                        weaknesses: [],
-                        suggestions: [],
-                    },
-                });
-            }
-        } catch (error) {
-            console.error('Error ending voice session:', error);
-            setVoiceSessionSummary({
-                bandScore: 0,
-                summary: {
-                    reasonForScore:
-                        'Network error while scoring this session. Please check your connection and try again.',
-                    strengths: [],
-                    weaknesses: [],
-                    suggestions: [],
-                },
-            });
-        } finally {
-            setIsVoiceEvaluating(false);
-        }
-    };
-
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
@@ -725,11 +480,11 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     }, [selectedMode]);
 
     const resetToModeSelection = () => {
+        voiceConversationRef.current?.stopSession?.();
         setSelectedMode(null);
         setEvaluation(null);
         setTranscript("");
         setSessionFeedback(null);
-        setVoiceSessionSummary(null);
         setConversationHistory([]);
         setIsRealtimeActive(false);
         setSessionId(null);
@@ -751,42 +506,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                         </div>
 
                         {/* Mode Selection Cards */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-                            {/* IELTS Exam Simulation Mode */}
-                            <div
-                                className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-amber-200 hover:border-amber-400 relative"
-                                onClick={() => setSelectedMode('exam')}
-                            >
-                                <span className="absolute top-3 right-3 inline-flex items-center rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 uppercase tracking-wide">
-                                    New
-                                </span>
-                                <div className="text-center">
-                                    <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                                        <span className="text-4xl">🎓</span>
-                                    </div>
-                                    <h3 className="text-xl sm:text-2xl font-bold text-slate-800 mb-3">
-                                        IELTS Exam Simulation
-                                    </h3>
-                                    <p className="text-slate-600 mb-6 leading-relaxed text-sm">
-                                        Full 3-part IELTS Speaking exam — Part 1 interview, Part 2 cue card with prep & speaking timers, Part 3 discussion, then a strict band score with detailed feedback.
-                                    </p>
-                                    <div className="space-y-2 text-sm text-slate-500">
-                                        <div className="flex items-center justify-center">
-                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
-                                            Part 1 / 2 / 3 structure
-                                        </div>
-                                        <div className="flex items-center justify-center">
-                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
-                                            1 min prep + 2 min cue card
-                                        </div>
-                                        <div className="flex items-center justify-center">
-                                            <span className="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
-                                            Official IELTS band scoring
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                             {/* Record & Submit Mode */}
                             <div 
                                 className="bg-white rounded-2xl p-5 sm:p-6 md:p-8 shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border-2 border-transparent hover:border-blue-200"
@@ -864,7 +584,7 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                                         Voice Conversation
                                     </h3>
                                     <p className="text-slate-600 mb-6 leading-relaxed">
-                                        Have a real-time voice conversation with an AI IELTS examiner. Practice speaking naturally with voice-to-voice interaction.
+                                        Live voice IELTS Speaking test with Alex, your examiner. Official 3-part structure (Parts 1, 2, and 3) — practice only, no post-session feedback.
                                     </p>
                                     <div className="space-y-2 text-sm text-slate-500">
                                         <div className="flex items-center justify-center">
@@ -887,14 +607,6 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
                 </div>
         );
         return embedded ? modeSelectionContent : <AppLayout>{modeSelectionContent}</AppLayout>;
-    }
-
-    // IELTS Exam Simulation Mode
-    if (selectedMode === 'exam') {
-        const examContent = (
-            <IeltsExamSimulator onExit={resetToModeSelection} />
-        );
-        return embedded ? examContent : <AppLayout>{examContent}</AppLayout>;
     }
 
     // Record & Submit Mode
@@ -1240,44 +952,28 @@ export function SpeakingPracticeView({ embedded = false, onReady }) {
     // Voice Conversation Mode
     if (selectedMode === 'voice') {
         const voiceModeContent = (
-            <div className="space-y-6 sm:space-y-8 p-3 sm:p-4 md:p-6 lg:p-8 bg-gradient-to-br from-purple-50 via-white to-pink-50 min-h-screen">
-                    {/* Header */}
-                    {!embedded && (
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="min-w-0">
-                                <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-purple-700 break-words">Voice Conversation</h1>
-                                <p className="text-slate-600 mt-1 sm:mt-2 text-sm sm:text-base">Have a real-time voice conversation with an AI IELTS examiner</p>
-                            </div>
-                            <button
-                                onClick={resetToModeSelection}
-                                className="self-start sm:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
-                            >
-                                ← Back to Modes
-                            </button>
+            <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50 p-3 sm:p-4 md:p-6 lg:p-8">
+                {!embedded && (
+                    <div className="max-w-3xl mx-auto mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h1 className="text-2xl sm:text-3xl font-extrabold text-purple-800">IELTS Speaking — Live Voice</h1>
+                            <p className="text-slate-600 mt-1 text-sm sm:text-base">
+                                Official 3-part test with your AI examiner. No scores — just practice.
+                            </p>
                         </div>
-                    )}
-
-                    <div className="max-w-4xl mx-auto space-y-6">
-                        <Panel title="Real-time Voice Conversation" className="bg-white/80 backdrop-blur rounded-2xl shadow-md">
-                            <VoiceConversation onEndSession={handleVoiceSessionEnd} />
-                        </Panel>
-
-                        {isVoiceEvaluating && (
-                            <Panel className="bg-gradient-to-br from-yellow-50 to-orange-50 rounded-2xl border border-slate-200 shadow-sm">
-                                <div className="flex items-center justify-center space-x-3">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600"></div>
-                                    <p className="text-slate-700 font-medium">Analyzing your speaking session...</p>
-                                </div>
-                            </Panel>
-                        )}
-
-                        {voiceSessionSummary && !isVoiceEvaluating && (
-                            <VoiceSessionSummary
-                                summary={voiceSessionSummary}
-                                onClose={() => setVoiceSessionSummary(null)}
-                            />
-                        )}
+                        <button
+                            type="button"
+                            onClick={resetToModeSelection}
+                            className="self-start sm:self-auto px-4 py-2 text-sm font-medium rounded-lg border border-slate-300 text-slate-600 hover:bg-white whitespace-nowrap"
+                        >
+                            ← Back to Modes
+                        </button>
                     </div>
+                )}
+
+                <div className="max-w-3xl mx-auto">
+                    <VoiceConversation ref={voiceConversationRef} />
+                </div>
             </div>
         );
         return embedded ? voiceModeContent : <AppLayout>{voiceModeContent}</AppLayout>;

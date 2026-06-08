@@ -104,7 +104,7 @@ export function createRealtimeAgent() {
       response: {
         output_modalities: ['audio'],
         instructions:
-          'Speak out loud NOW with your voice. Say exactly: "Good day. My name is Alex and I\'ll be your examiner today. Could you please tell me your full name?" Nothing else.',
+          'Speak out loud NOW in English ONLY. Never use Hindi or any other language. Say exactly: "Good afternoon. My name is Alex and I will be your examiner today. Could you tell me your full name, please?" Nothing else.',
       },
     }));
   };
@@ -390,7 +390,7 @@ export function createRealtimeAgent() {
       type: 'response.create',
       response: {
         output_modalities: ['audio'],
-        instructions: 'Give an IELTS Part 2 cue card with a Describe topic and 3 bullet prompts. Speak it out loud.',
+        instructions: 'Give an IELTS Part 2 cue card in English ONLY. Speak it out loud in English.',
       },
     }));
   };

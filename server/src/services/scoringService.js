@@ -126,6 +126,23 @@ function isMostlyRepeatedWords(text) {
 }
 
 /**
+ * True when most utterances are very short (≤5 words) — typical of phrase-only answers.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isMostlyShortPhrases(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  const segments = raw
+    .split(/[.!?]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return countWords(raw) <= 5;
+  const shortCount = segments.filter((s) => countWords(s) <= 5).length;
+  return shortCount / segments.length >= 0.7;
+}
+
+/**
  * Catch obvious random-character / gibberish submissions:
  *  - extremely low vowel ratio
  *  - long single token (≥ 20 chars) and no spaces
@@ -325,12 +342,15 @@ function validateSpeakingSubmission({ transcript, audioDurationSec }) {
   };
 
   if (durationSec !== null && durationSec < 20) {
-    setCap(3, "Speech under 20 seconds — capped at band 3.");
+    setCap(3, "Speaking duration under 20 seconds — maximum band 3.");
   }
-  if (wordCount < 30) {
-    setCap(3.5, "Fewer than 30 spoken words — capped at band 3.5.");
-  } else if (wordCount < 60) {
-    setCap(4.5, "Fewer than 60 spoken words — capped at band 4.5.");
+  if (wordCount < 50) {
+    setCap(4, "Fewer than 50 spoken words — maximum band 4.");
+  } else if (wordCount < 100) {
+    setCap(5, "Fewer than 100 spoken words — maximum band 5.");
+  }
+  if (isMostlyShortPhrases(text)) {
+    setCap(5, "Answers contain mostly short phrases — maximum band 5.");
   }
 
   return {
@@ -433,6 +453,7 @@ module.exports = {
   isBlank,
   isLikelyGibberish,
   isMostlyRepeatedWords,
+  isMostlyShortPhrases,
 
   // Writing / speaking validation
   writingBucketForTask,

@@ -279,7 +279,7 @@ io.on('connection', (socket) => {
             messages: [
               {
                 role: "system",
-                content: `IELTS examiner. Natural conversation practice.
+                content: `IELTS examiner. Natural conversation practice. ENGLISH ONLY — never use Hindi, Urdu, or any language other than English.
 
 Personality: Warm, encouraging, genuinely interested.
 
@@ -488,7 +488,7 @@ Start with warm greeting + opening question.`
             messages: [
               {
                 role: "system",
-                content: `IELTS examiner. Real-time streaming conversation.
+                content: `IELTS examiner. Real-time streaming conversation. ENGLISH ONLY — never use Hindi, Urdu, or any language other than English.
 
 CRITICAL: Read and understand user's message, respond specifically.
 
@@ -649,7 +649,7 @@ Remember: Real conversation. Respond specifically to what they said.`
             messages: [
               {
                 role: "system",
-                content: `IELTS examiner. Natural conversation practice.
+                content: `IELTS examiner. Natural conversation practice. ENGLISH ONLY — never use Hindi, Urdu, or any language other than English.
 
 CRITICAL: Listen carefully and respond directly to user's words.
 

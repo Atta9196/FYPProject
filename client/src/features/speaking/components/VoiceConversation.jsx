@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { createRealtimeAgent } from '../realtime/useRealtimeOpenAI';
 
-export function VoiceConversation({ onEndSession }) {
+export const VoiceConversation = forwardRef(function VoiceConversation(_props, ref) {
     const [isConnected, setIsConnected] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [isListening, setIsListening] = useState(false);
@@ -19,7 +19,8 @@ export function VoiceConversation({ onEndSession }) {
 		const [ieltsPart, setIeltsPart] = useState('Part 1');
 		const [isMuted, setIsMuted] = useState(false); // mic mute toggle (realtime mode)
 		const [statusBanner, setStatusBanner] = useState(''); // ephemeral status line
-		const [isEnding, setIsEnding] = useState(false); // double-click guard for End
+    const [isEnding, setIsEnding] = useState(false); // double-click guard for End
+    const [sessionEnded, setSessionEnded] = useState(false);
 		const examinerTurnsRef = useRef(0);
 		const streamingAgentTextRef = useRef('');
     
@@ -57,6 +58,77 @@ export function VoiceConversation({ onEndSession }) {
     const backupBlobReadyRef = useRef(null); // resolves to final Blob
     // Enable Realtime API by default for better experience, can be disabled via env var
     const useRealtime = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_OPENAI_REALTIME !== 'false');
+
+    const sessionIdRef = useRef(null);
+    sessionIdRef.current = sessionId;
+
+    const hardStopSession = useCallback(() => {
+        try {
+            if (realtimeRef.current?.interrupt) realtimeRef.current.interrupt();
+        } catch {}
+        try {
+            if (realtimeRef.current?.stop) {
+                const p = realtimeRef.current.stop();
+                if (p?.catch) p.catch(() => {});
+            }
+        } catch {}
+        realtimeRef.current = null;
+
+        const killAudio = (audioRefObj) => {
+            if (!audioRefObj?.current) return;
+            try {
+                audioRefObj.current.pause();
+                audioRefObj.current.srcObject = null;
+                audioRefObj.current.currentTime = 0;
+            } catch {}
+            audioRefObj.current = null;
+        };
+        killAudio(realtimeAudioRef);
+        killAudio(audioRef);
+
+        try {
+            if (backupRecorderRef.current?.state === 'recording') {
+                backupRecorderRef.current.stop();
+            }
+        } catch {}
+        backupRecorderRef.current = null;
+        backupChunksRef.current = [];
+        backupBlobReadyRef.current = null;
+        backupStartedAtRef.current = null;
+
+        if (voiceDetectionRef.current) {
+            cancelAnimationFrame(voiceDetectionRef.current);
+            voiceDetectionRef.current = null;
+        }
+        if (streamingIntervalRef.current) {
+            clearInterval(streamingIntervalRef.current);
+            streamingIntervalRef.current = null;
+        }
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+            try { audioContextRef.current.close(); } catch {}
+            audioContextRef.current = null;
+        }
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+            streamRef.current = null;
+        }
+        if (processingTimeoutRef.current) {
+            clearTimeout(processingTimeoutRef.current);
+            processingTimeoutRef.current = null;
+        }
+        try { window.speechSynthesis?.cancel(); } catch {}
+
+        const sid = sessionIdRef.current;
+        if (socketRef.current && sid && sid !== 'realtime') {
+            try {
+                socketRef.current.emit('voice-conversation', { type: 'end', sessionId: sid });
+            } catch {}
+        }
+    }, []);
+
+    useImperativeHandle(ref, () => ({
+        stopSession: () => hardStopSession(),
+    }), [hardStopSession]);
 
     useEffect(() => {
         // If using Realtime API, do NOT initialize socket (prevents two agents speaking)
@@ -109,38 +181,12 @@ export function VoiceConversation({ onEndSession }) {
         };
     }, [useRealtime]);
 
-    // Hard cleanup when the component unmounts: stop the realtime WebRTC
-    // session, the volume-meter loop, and any open AudioContext so leaving
-    // the page mid-call doesn't leave the mic / connection alive.
+    // Hard cleanup when the component unmounts or user navigates away.
     useEffect(() => {
         return () => {
-            try {
-                if (realtimeRef.current && typeof realtimeRef.current.stop === 'function') {
-                    realtimeRef.current.stop().catch(() => {});
-                }
-            } catch {}
-            try {
-                if (backupRecorderRef.current && backupRecorderRef.current.state === 'recording') {
-                    backupRecorderRef.current.stop();
-                }
-            } catch {}
-            backupRecorderRef.current = null;
-            backupChunksRef.current = [];
-            if (voiceDetectionRef.current) {
-                cancelAnimationFrame(voiceDetectionRef.current);
-                voiceDetectionRef.current = null;
-            }
-            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-                try { audioContextRef.current.close(); } catch {}
-                audioContextRef.current = null;
-            }
-            if (processingTimeoutRef.current) {
-                clearTimeout(processingTimeoutRef.current);
-                processingTimeoutRef.current = null;
-            }
-            try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch {}
+            hardStopSession();
         };
-    }, []);
+    }, [hardStopSession]);
 
     // ── Backup recording helpers ────────────────────────────────────
     const startBackupRecording = (stream) => {
@@ -525,6 +571,8 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const startVoiceSession = async () => {
+        if (sessionId || isEnding) return;
+        setSessionEnded(false);
         try {
             if (useRealtime) {
                 try {
@@ -1360,85 +1408,16 @@ export function VoiceConversation({ onEndSession }) {
     };
 
     const endVoiceSession = async () => {
-        if (isEnding) return; // guard against double-click
+        if (isEnding || !sessionId) return;
         setIsEnding(true);
-        // Roll up a partial speech segment that hadn't been "stopped" yet.
-        if (userSpeechStartedAtRef.current) {
-            const segSec = Math.max(
-                0,
-                (Date.now() - userSpeechStartedAtRef.current) / 1000
-            );
-            userSpeakingDurationRef.current =
-                (userSpeakingDurationRef.current || 0) + segSec;
-            userSpeechStartedAtRef.current = null;
-        }
+        setStatusBanner('Ending session…');
 
-        // ── BACKUP TRANSCRIPTION ── ALWAYS try to transcribe the local
-        // mic recording before tearing down the call. This is what saves
-        // us when the realtime data channel never delivered the candidate's
-        // transcripts — we still get a real transcript from Whisper here.
-        setStatusBanner('💾 Saving your recording…');
-        let backupResult = { transcript: null, durationSec: 0 };
-        try {
-            backupResult = await stopBackupAndTranscribe();
-        } catch (e) {
-            console.warn('⚠️ Backup transcribe wrapper failed:', e);
-        }
+        userSpeakingDurationRef.current = 0;
+        userSpeechStartedAtRef.current = null;
 
-        // Cut the AI off mid-sentence so the call closes immediately and
-        // does NOT play a goodbye line / score reveal through the speakers.
-        if (useRealtime && realtimeRef.current) {
-            try {
-                if (typeof realtimeRef.current.interrupt === 'function') {
-                    realtimeRef.current.interrupt();
-                }
-            } catch {}
-            realtimeRef.current.stop().catch(() => {});
-            realtimeRef.current = null;
-        }
-        if (realtimeAudioRef.current) {
-            try {
-                realtimeAudioRef.current.pause();
-                realtimeAudioRef.current.srcObject = null;
-            } catch {}
-            realtimeAudioRef.current = null;
-        }
-        // Stop voice activity detection
-        if (voiceDetectionRef.current) {
-            cancelAnimationFrame(voiceDetectionRef.current);
-            voiceDetectionRef.current = null;
-        }
+        hardStopSession();
 
-        // Stop streaming interval
-        if (streamingIntervalRef.current) {
-            clearInterval(streamingIntervalRef.current);
-            streamingIntervalRef.current = null;
-        }
-
-        // Close audio context (only if still open)
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-            try { audioContextRef.current.close(); } catch {}
-            audioContextRef.current = null;
-        }
-
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-        }
-
-        if (processingTimeoutRef.current) {
-            clearTimeout(processingTimeoutRef.current);
-            processingTimeoutRef.current = null;
-        }
-
-        // Stop any TTS that's mid-utterance (Socket.IO fallback path)
-        try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch {}
-
-        // Only notify server if not in Realtime mode
-        if (socketRef.current && sessionId !== 'realtime') {
-            socketRef.current.emit('voice-conversation', { type: 'end', sessionId });
-        }
-
+        setSessionId(null);
         setIsRecording(false);
         setIsListening(false);
         setIsProcessing(false);
@@ -1446,421 +1425,212 @@ export function VoiceConversation({ onEndSession }) {
         setVoiceActivity(false);
         setIsMuted(false);
         setVolumeLevel(0);
-        setSessionId(null);
         setRealtimeTranscript('');
-        setIsEnding(false);
-        // Don't wipe userTranscript / currentMessage / conversationHistory so
-        // the user can still see the last reply after the session ends.
-
-        // Notify parent so it can trigger AI evaluation and save band score.
-        // userSpeakingDurationSec is what /realtime/end uses to enforce IELTS
-        // length caps (< 20s → max band 3, < 30 words → max band 3.5, etc).
-        const vadDurationSec = Number(userSpeakingDurationRef.current || 0);
-        userSpeakingDurationRef.current = 0;
-
-        // Build the final conversation history. If realtime API gave us
-        // user messages, keep them. If they're missing/empty but the
-        // backup transcript has content, splice the backup transcript
-        // in as a synthetic user turn so the scorer has something to
-        // evaluate (instead of falsely reporting "no speech").
-        let finalHistory = conversationHistory;
-        const hasRealtimeUserMessages = conversationHistory.some(
-            (m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0
-        );
-        const backupText = (backupResult.transcript || '').trim();
-        if (!hasRealtimeUserMessages && backupText) {
-            finalHistory = [
-                ...conversationHistory,
-                {
-                    role: 'user',
-                    content: backupText,
-                    timestamp: new Date(),
-                    source: 'backup-transcription',
-                },
-            ];
-            console.log('🛟 Using backup transcript for scoring (realtime had none).');
-        }
-
-        // Use whichever duration estimate is larger and more credible.
-        // The MediaRecorder elapsed time is wall-clock and is a hard upper
-        // bound; the VAD-derived sum is closer to actual speech time.
-        // For length-cap purposes we want speech time, but if VAD never
-        // fired we fall back to the recording length as a proxy.
-        const totalUserSpeakingSec = Math.max(vadDurationSec, hasRealtimeUserMessages ? 0 : backupResult.durationSec);
-
+        setCurrentMessage('');
         setStatusBanner('');
-        if (typeof onEndSession === 'function') {
-            try {
-                onEndSession({
-                    sessionId,
-                    conversationHistory: finalHistory,
-                    userSpeakingDurationSec: totalUserSpeakingSec,
-                });
-            } catch (err) {
-                console.warn('onEndSession handler failed:', err);
-            }
-        }
+        setSessionEnded(true);
+        setIsEnding(false);
     };
 
+    const liveStatusLabel = sessionEnded
+        ? 'Session ended'
+        : isEnding
+          ? 'Ending session…'
+          : isMuted
+            ? 'Microphone muted'
+            : statusBanner
+              ? statusBanner
+              : isPlaying
+                ? 'Examiner is speaking'
+                : voiceActivity
+                  ? 'You are speaking'
+                  : sessionId
+                    ? 'Listening — speak when ready'
+                    : 'Ready to begin';
+
+    const partBadgeClass =
+        ieltsPart === 'Part 1'
+            ? 'bg-sky-100 text-sky-800 border-sky-200'
+            : ieltsPart === 'Part 2'
+              ? 'bg-amber-100 text-amber-800 border-amber-200'
+              : 'bg-violet-100 text-violet-800 border-violet-200';
+
     return (
-        <div className="space-y-6">
-            {/* Connection Status */}
-            <div className="flex items-center justify-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'} ${isConnected ? 'animate-pulse' : ''}`}></div>
-                <span className="text-sm text-slate-600">
-                    {isConnected 
-                        ? (useRealtime && sessionId === 'realtime'
-                            ? '✅ Connected via Realtime API'
-                            : socketRef.current?.connected
-                                ? '✅ Connected to voice server'
-                                : '⚠️ Connection issue - check console')
-                        : 'Connecting...'}
-                </span>
+        <div className="space-y-5">
+            {/* Header strip */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-purple-100 bg-gradient-to-r from-purple-50 to-white px-4 py-3">
+                <div className="flex items-center gap-2">
+                    <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${
+                            sessionId && !sessionEnded ? 'bg-emerald-500 animate-pulse' : sessionEnded ? 'bg-slate-400' : 'bg-slate-300'
+                        }`}
+                    />
+                    <span className="text-sm font-medium text-slate-700">
+                        {sessionId && !sessionEnded ? 'Live session' : sessionEnded ? 'Offline' : 'Not started'}
+                    </span>
+                </div>
+                {(sessionId || sessionEnded) && (
+                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${partBadgeClass}`}>
+                        {ieltsPart}
+                    </span>
+                )}
+                <span className="text-xs text-slate-500 w-full sm:w-auto sm:text-right">{liveStatusLabel}</span>
             </div>
 
-            {/* Mode Indicator - Always Streaming */}
-            {sessionId && (
-                <div className="flex flex-col items-center space-y-2">
-                    <div className="flex items-center justify-center space-x-3">
-                        <span className="text-sm text-slate-600">Mode:</span>
-                        {useRealtime && sessionId === 'realtime' ? (
-                            // Realtime API mode
-                            <div className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                                🚀 Realtime API (Best Experience)
-                            </div>
-                        ) : (
-                            // Streaming mode only
-                            <div className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
-                                🎙️ Live Streaming
-                            </div>
-                        )}
-                        <span className="text-xs text-slate-500">
-                            {useRealtime && sessionId === 'realtime' 
-                                ? 'AI understands and responds in real-time' 
-                                : 'Speak naturally - AI detects your voice automatically'}
-                        </span>
-                    </div>
-					{/* IELTS Part Indicator */}
-					<div className="flex items-center space-x-2">
-						<span className="text-xs text-slate-600">Current Section:</span>
-						<span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${
-							ieltsPart === 'Part 1' ? 'bg-sky-50 text-sky-700 border-sky-200'
-							: ieltsPart === 'Part 2' ? 'bg-amber-50 text-amber-700 border-amber-200'
-							: 'bg-violet-50 text-violet-700 border-violet-200'
-						}`}>
-							{ieltsPart}
-						</span>
-					</div>
-                </div>
-            )}
-
-            {/* Current Message Display */}
-            {currentMessage && (
-                <div className={`bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-slate-200 p-6 shadow-sm ${isPlaying ? 'ring-2 ring-green-400' : ''}`}>
-                    <div className="flex items-start gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isPlaying ? 'bg-green-100 animate-pulse' : 'bg-blue-100'}`}>
-                            <span className={`text-lg ${isPlaying ? 'text-green-600' : 'text-blue-600'}`}>
-                                {isPlaying ? '🔊' : '🎙️'}
-                            </span>
+            {/* Examiner line + live transcript */}
+            {(currentMessage || realtimeTranscript || userTranscript) && sessionId && !sessionEnded && (
+                <div className="space-y-3">
+                    {currentMessage && (
+                        <div className={`rounded-2xl border p-4 ${isPlaying ? 'border-purple-300 bg-purple-50/80 ring-2 ring-purple-200' : 'border-slate-200 bg-white'}`}>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-purple-700 mb-1">Examiner</p>
+                            <p className="text-sm text-slate-800 leading-relaxed">{currentMessage}</p>
                         </div>
-                        <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-sm font-semibold text-slate-800">AI Examiner:</h4>
-                                {isPlaying && (
-                                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium animate-pulse">
-                                        🔊 Speaking...
-                                    </span>
-                                )}
-                            </div>
-                            <p className="text-slate-700 leading-relaxed">{currentMessage}</p>
-                            {!isPlaying && !isProcessing && (
-                                <p className="text-xs text-slate-500 mt-2 italic">
-                                    (Audio response will play automatically)
-                                </p>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Real-time Transcription Display - Shows as user speaks */}
-            {realtimeTranscript && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-300 p-4 shadow-md animate-pulse">
-                    <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-200 flex items-center justify-center animate-pulse">
-                            <span className="text-blue-600 text-sm">🎤</span>
-                        </div>
-                        <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                                <h4 className="text-xs font-semibold text-blue-800">Speaking...</h4>
-                                <div className="flex space-x-1">
-                                    <div className="w-1 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                                    <div className="w-1 h-4 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.1s'}}></div>
-                                    <div className="w-1 h-2 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                                    <div className="w-1 h-3 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.3s'}}></div>
-                                    <div className="w-1 h-4 bg-blue-500 rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
-                                </div>
-                            </div>
-                            <div className="bg-white rounded-lg p-3 border border-blue-200">
-                                <p className="text-slate-800 text-sm leading-relaxed font-medium">"{realtimeTranscript}"</p>
-                            </div>
-                            <p className="text-xs text-blue-600 mt-2 italic">Real-time transcription...</p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* User Transcript Display - Shows final transcript after speaking */}
-            {userTranscript && !realtimeTranscript && (
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-slate-200 p-4 shadow-sm">
-                    <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-                            <span className="text-green-600 text-sm">👤</span>
-                        </div>
-                        <div className="flex-1">
-                            <h4 className="text-xs font-semibold text-slate-800 mb-1">You said:</h4>
-                            <p className="text-slate-700 text-sm leading-relaxed italic">"{userTranscript}"</p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Voice Activity Indicator */}
-			<div className="flex items-center justify-center space-x-4">
-                <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm text-slate-600">
-                        {isListening ? 'Listening...' : 'Not listening'}
-                    </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${isProcessing ? 'bg-yellow-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm text-slate-600">
-                        {isProcessing ? 'Processing...' : 'Ready'}
-                    </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${voiceActivity ? 'bg-purple-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm text-slate-600">
-                        {voiceActivity ? 'Voice Detected' : 'No Voice'}
-                    </span>
-                </div>
-
-                <div className="flex items-center space-x-3">
-                    <div className={`w-4 h-4 rounded-full ${isPlaying ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className={`text-sm font-medium ${isPlaying ? 'text-green-600' : 'text-slate-600'}`}>
-                        {isPlaying ? '🎵 AI Speaking...' : '🔇 Silent'}
-                    </span>
-                    {isPlaying && (
-                        <div className="flex space-x-1">
-                            <div className="w-1 h-3 bg-green-500 animate-pulse"></div>
-                            <div className="w-1 h-4 bg-green-500 animate-pulse" style={{animationDelay: '0.1s'}}></div>
-                            <div className="w-1 h-2 bg-green-500 animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                            <div className="w-1 h-3 bg-green-500 animate-pulse" style={{animationDelay: '0.3s'}}></div>
+                    )}
+                    {(realtimeTranscript || userTranscript) && (
+                        <div className="rounded-2xl border border-blue-200 bg-blue-50/60 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700 mb-1">You</p>
+                            <p className="text-sm text-slate-800 leading-relaxed italic">
+                                &ldquo;{realtimeTranscript || userTranscript}&rdquo;
+                            </p>
                         </div>
                     )}
                 </div>
-            </div>
+            )}
 
-			{/* Realtime mic level meter — gives the user immediate visual
-			    confirmation that their mic is actually picking up audio.
-			    "0% forever" was the #1 reason scoring saw 0 spoken words. */}
-			<div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-				<div className="flex items-center justify-between mb-1.5">
-					<span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
-						<span className={`inline-block w-2 h-2 rounded-full ${
-							volumeLevel > 10 ? 'bg-green-500 animate-pulse' :
-							isMuted ? 'bg-amber-500' : 'bg-slate-300'
-						}`} />
-						{isMuted ? 'Mic muted'
-							: volumeLevel > 10 ? '✅ Mic is picking up your voice'
-							: '🎙️ Mic is silent — speak louder or check your microphone'}
-					</span>
-					<span className="text-xs text-slate-500 tabular-nums">{volumeLevel}%</span>
-				</div>
-				<div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-					<div
-						className="h-3 rounded-full transition-all duration-100"
-						style={{
-							width: `${volumeLevel}%`,
-							background: volumeLevel > 70 ? '#22c55e' : volumeLevel > 30 ? '#eab308' : '#94a3b8'
-						}}
-					></div>
-				</div>
-				<p className="text-[11px] text-slate-500 mt-1.5">
-					Aim for the green range while speaking. If this stays at 0% even when you talk, check your
-					browser&apos;s microphone permission or pick a different input device.
-				</p>
-			</div>
-
-            {/* Microphone Permission Help */}
-            {currentMessage && currentMessage.includes('Microphone permission') && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-4">
-                    <h4 className="font-semibold text-yellow-800 mb-2">📋 How to Enable Microphone Access:</h4>
-                    <ol className="list-decimal list-inside space-y-1 text-sm text-yellow-700">
-                        <li>Look for the lock icon (🔒) or info icon (ℹ️) in your browser's address bar</li>
-                        <li>Click on it to open site permissions</li>
-                        <li>Find "Microphone" in the list</li>
-                        <li>Change it from "Block" to "Allow"</li>
-                        <li>Reload this page (F5 or Ctrl+R)</li>
-                        <li>Click "Start Voice Conversation" again</li>
-                    </ol>
+            {/* Mic level — only while session active */}
+            {sessionId && !sessionEnded && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-slate-700">Microphone level</span>
+                        <span className="text-xs text-slate-500 tabular-nums">{volumeLevel}%</span>
+                    </div>
+                    <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                            className="h-full rounded-full transition-all duration-100"
+                            style={{
+                                width: `${volumeLevel}%`,
+                                background: volumeLevel > 70 ? '#22c55e' : volumeLevel > 25 ? '#a855f7' : '#cbd5e1',
+                            }}
+                        />
+                    </div>
                 </div>
             )}
 
-            {/* Voice Controls */}
-            <div className="flex flex-col items-center space-y-4">
-                {!sessionId ? (
-                    <button
-                        onClick={startVoiceSession}
-                        disabled={!isConnected && !useRealtime}
-                        className="px-8 py-4 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-                    >
-                        <span className="text-2xl">🎙️</span>
-                        <span>Start Voice Conversation</span>
-                    </button>
-                ) : (
-                    <div className="flex flex-col items-center space-y-4">
-                        <div className="text-center">
-                            <div className="text-lg font-semibold text-slate-700 mb-2">
-                                {useRealtime && realtimeRef.current ? '📞 Real-Time Voice Call Active' : '🎙️ Live Streaming Mode Active'}
-                            </div>
-                            <div className="text-sm text-slate-600 mb-4">
-                                {useRealtime && realtimeRef.current ?
-                                    'Speak naturally — the moment you start talking, the AI will pause and listen. Just like a real conversation.' :
-                                    'Just speak naturally - the AI will detect your voice and respond automatically'
-                                }
-                            </div>
-                            <div className={`px-4 py-2 rounded-lg ${
-                                isMuted ? 'bg-amber-100 text-amber-700'
-                                : voiceActivity ? 'bg-green-100 text-green-700'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}>
-                                {useRealtime && realtimeRef.current ? (
-                                    isMuted ? '🔕 Microphone muted — tap Unmute to continue' :
-                                    statusBanner ? statusBanner :
-                                    isPlaying ? '🔊 AI is speaking…' :
-                                    voiceActivity ? '🎤 You are speaking…' :
-                                    '👂 Listening… speak naturally, the AI will reply.'
-                                ) : (
-                                    voiceActivity ? '🎤 Voice Detected - Recording...' : '🔇 Waiting for voice...'
-                                )}
-                            </div>
-                        </div>
+            {currentMessage && currentMessage.includes('Microphone permission') && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <p className="font-semibold mb-2">Allow microphone access in your browser, then reload and try again.</p>
+                </div>
+            )}
 
-                        <div className="flex flex-wrap gap-3 justify-center">
-                            {useRealtime && realtimeRef.current && (
+            {/* Main controls */}
+            <div className="rounded-2xl border border-purple-100 bg-white p-6 shadow-sm text-center space-y-4">
+                {!sessionId && !sessionEnded && (
+                    <>
+                        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-purple-100 to-pink-100 text-4xl">
+                            🎙️
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">IELTS Speaking Test</h3>
+                            <p className="mt-1 text-sm text-slate-600 max-w-md mx-auto">
+                                Start a live voice session with your IELTS examiner. Parts 1, 2, and 3 — just like the real test.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={startVoiceSession}
+                            disabled={!isConnected && !useRealtime}
+                            className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-8 py-3.5 text-white font-semibold shadow-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            <span>Start speaking test</span>
+                        </button>
+                    </>
+                )}
+
+                {sessionId && !sessionEnded && (
+                    <>
+                        <div
+                            className={`mx-auto max-w-sm rounded-xl px-4 py-3 text-sm font-medium ${
+                                isMuted
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    : isPlaying
+                                      ? 'bg-purple-50 text-purple-800 border border-purple-200'
+                                      : voiceActivity
+                                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                        : 'bg-slate-50 text-slate-700 border border-slate-200'
+                            }`}
+                        >
+                            {liveStatusLabel}
+                        </div>
+                        <div className="flex flex-wrap justify-center gap-3">
+                            {useRealtime && (
                                 <button
+                                    type="button"
                                     onClick={toggleMute}
-                                    className={`px-4 py-3 rounded-lg font-semibold flex items-center gap-2 ${
+                                    className={`rounded-xl px-5 py-2.5 text-sm font-semibold transition-colors ${
                                         isMuted
                                             ? 'bg-amber-500 text-white hover:bg-amber-600'
                                             : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                     }`}
-                                    title={isMuted ? 'Unmute your microphone' : 'Mute your microphone (pause)'}
                                 >
-                                    <span className="text-lg">{isMuted ? '🔈' : '🎙️'}</span>
-                                    <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+                                    {isMuted ? 'Unmute' : 'Mute'}
                                 </button>
                             )}
                             <button
+                                type="button"
                                 onClick={endVoiceSession}
                                 disabled={isEnding}
-                                className="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center space-x-2"
+                                className="rounded-xl bg-rose-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60 transition-colors"
                             >
-                                <span className="text-xl">{isEnding ? '⏳' : '🏁'}</span>
-                                <span>{isEnding ? 'Saving & scoring…' : 'End Session'}</span>
+                                {isEnding ? 'Ending…' : 'End session'}
                             </button>
                         </div>
-                    </div>
+                    </>
+                )}
+
+                {sessionEnded && (
+                    <>
+                        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-3xl">
+                            ✓
+                        </div>
+                        <p className="text-sm font-semibold text-slate-800">Speaking session ended</p>
+                        <p className="text-xs text-slate-500">The connection is closed. You can start a new test when ready.</p>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSessionEnded(false);
+                                setConversationHistory([]);
+                                startVoiceSession();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition-colors"
+                        >
+                            Start new test
+                        </button>
+                    </>
                 )}
             </div>
 
-            {/* Status Indicators */}
-            <div className="flex justify-center space-x-6">
-                <div className="flex items-center space-x-2">
-                    {useRealtime && realtimeRef.current ? (
-                        <>
-                            <div className={`w-3 h-3 rounded-full ${isPlaying ? 'bg-blue-500 animate-pulse' : voiceActivity ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                            <span className="text-sm text-slate-600">
-                                {isPlaying ? 'AI Speaking...' : voiceActivity ? 'You Speaking...' : 'Listening...'}
-                            </span>
-                        </>
-                    ) : (
-                        <>
-                            <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                            <span className="text-sm text-slate-600">
-                                {isRecording ? 'Recording...' : 'Not Recording'}
-                            </span>
-                        </>
-                    )}
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                    <div className={`w-3 h-3 rounded-full ${isProcessing ? 'bg-yellow-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm text-slate-600">
-                        {isProcessing ? 'Processing...' : 'Ready'}
-                    </span>
-                </div>
-
-                <div className="flex items-center space-x-3">
-                    <div className={`w-4 h-4 rounded-full ${isPlaying ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className={`text-sm font-medium ${isPlaying ? 'text-green-600' : 'text-slate-600'}`}>
-                        {isPlaying ? '🎵 AI Speaking...' : '🔇 Silent'}
-                    </span>
-                    {isPlaying && (
-                        <div className="flex space-x-1">
-                            <div className="w-1 h-3 bg-green-500 animate-pulse"></div>
-                            <div className="w-1 h-4 bg-green-500 animate-pulse" style={{animationDelay: '0.1s'}}></div>
-                            <div className="w-1 h-2 bg-green-500 animate-pulse" style={{animationDelay: '0.2s'}}></div>
-                            <div className="w-1 h-3 bg-green-500 animate-pulse" style={{animationDelay: '0.3s'}}></div>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Enhanced Conversation History */}
+            {/* Conversation log */}
             {conversationHistory.length > 0 && (
-                <div className="bg-gradient-to-br from-white to-slate-50 rounded-xl border border-slate-200 p-4 max-h-64 overflow-y-auto shadow-sm">
-                    <h4 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                        Live Conversation
-                    </h4>
-                    <div className="space-y-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 max-h-72 overflow-y-auto">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Conversation</h4>
+                    <div className="space-y-2">
                         {conversationHistory.map((message, index) => (
                             <div
                                 key={index}
                                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
                                 <div
-                                    className={`max-w-xs px-4 py-3 rounded-xl text-sm shadow-sm ${
+                                    className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                                         message.role === 'user'
-                                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-                                            : 'bg-gradient-to-r from-slate-50 to-white text-slate-800 border border-slate-200'
+                                            ? 'bg-purple-600 text-white'
+                                            : 'bg-white text-slate-800 border border-slate-200'
                                     }`}
                                 >
-                                    <div className="flex items-start gap-2">
-                                        {message.role === 'examiner' && (
-                                            <div className="w-5 h-5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
-                                                AI
-                                            </div>
-                                        )}
-                                        <div className="flex-1">
-                                            <p className="leading-relaxed">{message.content}</p>
-                                            <p className={`text-xs mt-2 ${
-                                                message.role === 'user' ? 'text-blue-100' : 'text-slate-500'
-                                            }`}>
-                                                {message.role === 'user' ? 'You' : 'AI Examiner'} • {message.timestamp?.toLocaleTimeString()}
-                                            </p>
-                                        </div>
-                                        {message.role === 'user' && (
-                                            <div className="w-5 h-5 bg-gradient-to-r from-blue-400 to-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
-                                                You
-                                            </div>
-                                        )}
-                                    </div>
+                                    <p className="leading-relaxed">{message.content}</p>
+                                    <p className={`text-[10px] mt-1 ${message.role === 'user' ? 'text-purple-200' : 'text-slate-400'}`}>
+                                        {message.role === 'user' ? 'You' : 'Examiner'}
+                                        {message.timestamp ? ` · ${message.timestamp.toLocaleTimeString()}` : ''}
+                                    </p>
                                 </div>
                             </div>
                         ))}
@@ -1869,4 +1639,4 @@ export function VoiceConversation({ onEndSession }) {
             )}
         </div>
     );
-}
+});
