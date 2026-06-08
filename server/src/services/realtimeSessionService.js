@@ -1,36 +1,55 @@
 const fetch = require('node-fetch');
 
 const OPENAI_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com').replace(/\/$/, '');
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-12-17';
 
-const DEFAULT_INSTRUCTIONS =
-  'You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.';
+const IELTS_EXAMINER_INSTRUCTIONS = `You are Alex, a calm professional IELTS Speaking examiner on a live voice call with a candidate.
+
+RULES FOR REAL-TIME CONVERSATION:
+- Speak out loud with your voice on every turn. Never stay silent when it is your turn.
+- Keep each reply to ONE short sentence (10-20 words). Ask ONE question at a time.
+- Listen to the candidate, then respond directly to what they said.
+- If the candidate interrupts you, stop immediately and listen.
+- Do not teach, correct, or give scores during the test.
+
+FLOW (in order):
+1) Greet: "Good day. My name is Alex and I'll be your examiner today. Could you please tell me your full name?"
+2) Part 1: Ask about hometown, work/study, then 2-3 familiar topics (hobbies, food, travel). Short questions only.
+3) Part 2: Give one "Describe..." cue card, allow ~1 minute prep, then let them speak up to 2 minutes.
+4) Part 3: 5-7 abstract discussion questions linked to the Part 2 topic.
+5) Close: "Thank you. That is the end of the speaking test."`;
+
+const DEFAULT_INSTRUCTIONS = IELTS_EXAMINER_INSTRUCTIONS;
 
 function buildSessionConfig(overrides = {}) {
   const session = {
     type: 'realtime',
     model: overrides.model || REALTIME_MODEL,
     instructions: overrides.instructions || DEFAULT_INSTRUCTIONS,
+    output_modalities: ['audio'],
     audio: {
+      input: {
+        transcription: overrides.transcription || { model: 'whisper-1' },
+        turn_detection: overrides.turn_detection || {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 700,
+          create_response: true,
+          interrupt_response: true,
+        },
+      },
       output: { voice: overrides.voice || 'verse' },
     },
+    max_output_tokens:
+      overrides.max_output_tokens ??
+      overrides.max_response_output_tokens ??
+      150,
   };
-
-  if (overrides.max_output_tokens != null) {
-    session.max_output_tokens = overrides.max_output_tokens;
-  } else if (overrides.max_response_output_tokens != null) {
-    session.max_output_tokens = overrides.max_response_output_tokens;
-  } else {
-    session.max_output_tokens = 120;
-  }
 
   return { session };
 }
 
-/**
- * Mint an ephemeral Realtime API token via POST /v1/realtime/client_secrets.
- * Returns a normalized payload compatible with existing client code.
- */
 async function createRealtimeClientSecret(overrides = {}) {
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY not configured');
@@ -94,4 +113,5 @@ module.exports = {
   buildSessionConfig,
   REALTIME_MODEL,
   DEFAULT_INSTRUCTIONS,
+  IELTS_EXAMINER_INSTRUCTIONS,
 };

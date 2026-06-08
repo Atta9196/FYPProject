@@ -2042,10 +2042,7 @@ router.get("/realtime/token", async (req, res) => {
   try {
     console.log("🎙️ Creating Realtime API token for real-time voice conversation...");
 
-    const session = await createRealtimeClientSecret({
-      instructions:
-        "You are a professional IELTS Speaking examiner conducting a natural, human-like conversation practice session.",
-    });
+    const session = await createRealtimeClientSecret();
 
     return res.json(session);
   } catch (error) {

@@ -1,5 +1,37 @@
-// Minimal WebRTC client for OpenAI Realtime API
-// Browser: fetch ephemeral token from server, then connect via WebRTC
+// OpenAI Realtime API — WebRTC client for live two-way voice (IELTS speaking)
+
+function resolveServerUrl() {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL;
+    if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+    if (import.meta.env.DEV) return '';
+  }
+  if (typeof window !== 'undefined' && window.__SERVER_URL__) return window.__SERVER_URL__;
+  return 'https://ielts-coach-backend.onrender.com';
+}
+
+function extractToken(session) {
+  if (!session) return null;
+  if (typeof session.value === 'string') return session.value;
+  if (typeof session.client_secret === 'string') return session.client_secret;
+  if (session.client_secret?.value) return session.client_secret.value;
+  if (session.data?.client_secret?.value) return session.data.client_secret.value;
+  return null;
+}
+
+function playRemoteAudio(el) {
+  if (!el) return;
+  el.muted = false;
+  el.volume = 1;
+  el.playsInline = true;
+  el.autoplay = true;
+  const p = el.play();
+  if (p && typeof p.then === 'function') {
+    p.then(() => console.log('✅ AI audio playing')).catch((err) => {
+      console.warn('⚠️ Autoplay blocked — click anywhere to hear AI:', err.message);
+    });
+  }
+}
 
 export function createRealtimeAgent() {
   let pc = null;
@@ -7,755 +39,369 @@ export function createRealtimeAgent() {
   let remoteAudioEl = null;
   let sessionTimer = null;
   let dataChannel = null;
-		let hasSentSessionInstructions = false;
+  let greetingSent = false;
+  let sessionConfigured = false;
 
   const isSupported = () => typeof RTCPeerConnection !== 'undefined';
 
-	/**
-	 * start options:
-	 * - audioEl
-	 * - onConnected
-	 * - onError
-	 * - maxDurationMs
-	 * - onTranscriptionUpdate({ transcript, isPartial, isComplete, eventType })
-	 * - onAgentMessage({ type: 'delta'|'done'|'question'|'part'|'feedback', text, meta })
-	 * - onFeedback({ pronunciation, fluency, lexical, grammar, band?, comment? })
-	 */
-	const start = async ({ audioEl, onConnected, onError, maxDurationMs, onTranscriptionUpdate, onAgentMessage, onFeedback } = {}) => {
-    try {
-      if (!isSupported()) throw new Error('WebRTC not supported');
+  const sendGreeting = () => {
+    if (greetingSent || !dataChannel || dataChannel.readyState !== 'open') return;
+    greetingSent = true;
+    console.log('🗣️ Requesting AI opening greeting…');
+    dataChannel.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        output_modalities: ['audio'],
+        instructions:
+          'Speak out loud NOW with your voice. Say exactly: "Good day. My name is Alex and I\'ll be your examiner today. Could you please tell me your full name?" Nothing else.',
+      },
+    }));
+  };
 
-      remoteAudioEl = audioEl || new Audio();
-      remoteAudioEl.autoplay = true;
+  const handleRealtimeEvent = (eventData, callbacks) => {
+    const { onTranscriptionUpdate, onAgentMessage, onFeedback, onAiSpeakingChange } = callbacks;
+    const t = eventData.type || '';
 
-      // 1) Get ephemeral token from server (try /api/speaking/realtime/token first, then fallbacks)
-      const SERVER_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SERVER_URL) 
-        || (typeof window !== 'undefined' && window.__SERVER_URL__) 
-        || 'https://ielts-coach-backend.onrender.com';
-      let resp, session;
-      
-      try {
-        // Try /api/speaking/realtime/token first (new endpoint)
-        resp = await fetch(`${SERVER_URL}/api/speaking/realtime/token`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        if (!resp.ok) {
-          // Fallback to voice session endpoint
-          console.log('🔄 /api/speaking/realtime/token failed, trying /api/voice/session...');
-          resp = await fetch(`${SERVER_URL}/api/voice/session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-          });
-          
-          if (!resp.ok) {
-            // Fallback to auth endpoint
-            console.log('🔄 /api/voice/session failed, trying /api/auth/realtime-token...');
-            resp = await fetch(`${SERVER_URL}/api/auth/realtime-token`);
-            
-            if (!resp.ok) {
-              const errorData = await resp.json().catch(() => ({ message: 'Unknown error' }));
-              throw new Error(`All endpoints failed. Last error: ${errorData.message || resp.statusText}`);
-            }
-          }
-        }
-        
-        session = await resp.json();
-        console.log('📋 Session response keys:', Object.keys(session));
-        console.log('🔑 client_secret exists:', !!session.client_secret);
-        console.log('🆔 session ID:', session.id || session.session_id);
-      } catch (e) {
-        console.error('❌ Error fetching realtime token:', e);
-        throw new Error(`Failed to get realtime token: ${e.message}`);
-      }
-      
-      // Log the full session object for debugging
-      console.log('📋 Full session object:', session);
-      
-      if (!session) {
-        throw new Error('No session data received from server');
-      }
-      
-      // Check for ephemeral token in various possible locations (new + legacy API)
-      let clientSecretValue = null;
+    if (t !== 'response.output_audio.delta' && t !== 'response.output_audio_transcript.delta' &&
+        t !== 'response.audio.delta' && t !== 'response.audio_transcript.delta') {
+      console.log('📨 Realtime event:', t);
+    }
 
-      if (typeof session.value === 'string') {
-        clientSecretValue = session.value;
-      } else if (session.client_secret) {
-        // Direct client_secret - must have .value property
-        if (typeof session.client_secret === 'string') {
-          // If it's a string, use it directly (legacy format)
-          clientSecretValue = session.client_secret;
-        } else if (session.client_secret.value) {
-          // Prefer .value property (correct format)
-          clientSecretValue = session.client_secret.value;
-        } else {
-          // Fallback to the object itself (shouldn't happen)
-          clientSecretValue = session.client_secret;
-        }
-      } else if (session.data?.client_secret) {
-        // Nested in data object
-        if (typeof session.data.client_secret === 'string') {
-          clientSecretValue = session.data.client_secret;
-        } else if (session.data.client_secret?.value) {
-          clientSecretValue = session.data.client_secret.value;
-        } else {
-          clientSecretValue = session.data.client_secret;
-        }
+    // Session ready → AI speaks first
+    if (t === 'session.created') {
+      sessionConfigured = true;
+      sendGreeting();
+      return;
+    }
+    if (t === 'session.updated') {
+      if (!greetingSent) sendGreeting();
+      return;
+    }
+
+    // AI is speaking (audio buffer lifecycle)
+    if (t === 'output_audio_buffer.started') {
+      onAiSpeakingChange?.(true);
+      playRemoteAudio(remoteAudioEl);
+      return;
+    }
+    if (t === 'output_audio_buffer.stopped' || t === 'output_audio_buffer.cleared') {
+      onAiSpeakingChange?.(false);
+      return;
+    }
+
+    // AI transcript (GA + legacy event names)
+    const isTranscriptDelta =
+      t === 'response.output_audio_transcript.delta' || t === 'response.audio_transcript.delta';
+    const isTranscriptDone =
+      t === 'response.output_audio_transcript.done' || t === 'response.audio_transcript.done';
+
+    if (isTranscriptDelta && onAgentMessage) {
+      const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+      if (textDelta) {
+        onAiSpeakingChange?.(true);
+        onAgentMessage({ type: 'delta', text: textDelta });
       }
-      
-      if (!clientSecretValue) {
-        console.error('❌ client_secret not found in session:', {
-          hasClientSecret: !!session.client_secret,
-          hasData: !!session.data,
-          sessionKeys: Object.keys(session),
-          clientSecretType: typeof session.client_secret,
-          clientSecretValue: session.client_secret?.value ? 'exists' : 'missing'
-        });
-        throw new Error('client_secret.value not found in session response. Check server logs for details.');
+      return;
+    }
+    if (isTranscriptDone && onAgentMessage) {
+      const finalText = typeof eventData.transcript === 'string' ? eventData.transcript : '';
+      onAgentMessage({ type: 'done', text: finalText });
+      onAiSpeakingChange?.(false);
+      return;
+    }
+
+    if (t === 'response.text.delta' && onAgentMessage) {
+      const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+      if (textDelta) onAgentMessage({ type: 'delta', text: textDelta });
+      return;
+    }
+    if (t === 'response.text.done' && onAgentMessage) {
+      const finalText = typeof eventData.text === 'string' ? eventData.text : '';
+      onAgentMessage({ type: 'done', text: finalText });
+      return;
+    }
+    if ((t === 'response.completed' || t === 'response.done') && onAgentMessage) {
+      onAgentMessage({ type: 'done', text: '' });
+      onAiSpeakingChange?.(false);
+      return;
+    }
+
+    // User speech (server VAD + transcription)
+    if (t === 'input_audio_buffer.speech_started' && onTranscriptionUpdate) {
+      onTranscriptionUpdate({ transcript: '', isPartial: true, isComplete: false, eventType: t, speechStarted: true });
+      return;
+    }
+    if (t === 'input_audio_buffer.speech_stopped' && onTranscriptionUpdate) {
+      onTranscriptionUpdate({ transcript: '', isPartial: true, isComplete: false, eventType: t, speechStopped: true });
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.delta' && onTranscriptionUpdate) {
+      const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
+      if (textDelta) {
+        onTranscriptionUpdate({ transcript: textDelta, isPartial: true, isComplete: false, eventType: t, isDelta: true });
       }
-      
-      // Validate it's a string (not an object)
-      if (typeof clientSecretValue !== 'string') {
-        console.error('❌ client_secret.value is not a string:', typeof clientSecretValue, clientSecretValue);
-        throw new Error('client_secret.value must be a string, but got: ' + typeof clientSecretValue);
-      }
-      
-      console.log('✅ client_secret.value found:', clientSecretValue.substring(0, 20) + '...');
-      console.log('✅ client_secret.value length:', clientSecretValue.length);
-      
-      console.log('✅ Session created:', {
-        sessionId: session.id || 'N/A',
-        type: 'session-started',
-        hasClientSecret: !!clientSecretValue,
-        clientSecretType: typeof session.client_secret
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.completed' && onTranscriptionUpdate) {
+      onTranscriptionUpdate({
+        transcript: typeof eventData.transcript === 'string' ? eventData.transcript : '',
+        isPartial: false,
+        isComplete: true,
+        eventType: t,
       });
-
-      // 2) Create PeerConnection
-      pc = new RTCPeerConnection({
-        iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.failed') {
+      console.warn('⚠️ Transcription failed:', eventData);
+      onTranscriptionUpdate?.({
+        transcript: '', isPartial: false, isComplete: true, eventType: t, failed: true,
+        error: eventData.error?.message || 'Transcription failed',
       });
-
-		// 3) Create data channel for text messages (oai-events)
-      // Note: OpenAI Realtime API uses this channel to send events (transcriptions, responses, etc.)
-      dataChannel = pc.createDataChannel('oai-events');
-		dataChannel.onopen = () => {
-        console.log('✅ Data channel opened for text messages');
-        console.log('📡 Data channel ready state:', dataChannel.readyState);
-
-			// Send session instructions to run a full IELTS Part 1/2/3 style conversation.
-			// AI behaves like a real examiner: one short question at a time, listens
-			// patiently for ~2s of silence (handled by server VAD), then continues.
-			try {
-				if (!hasSentSessionInstructions) {
-					const ieltsInstructions = `You are a calm, professional IELTS Speaking examiner. The candidate is on a live voice call with you, exactly like a face-to-face exam. Follow IELTS rules strictly.
-
-CORE BEHAVIOUR
-- This is a live two-way voice call. Talk like a real person on a phone.
-- Speak only when it is your turn (the candidate has stopped). If the candidate starts talking while you are speaking, STOP immediately and let them finish.
-- Ask ONE short question at a time. Keep your replies to ONE short sentence (~10-20 words). Never monologue.
-- Do NOT teach, correct mistakes, or reveal any score during the exam.
-- Reference specific things the candidate just said when you ask follow-ups.
-- If the candidate stalls or says nothing for a few seconds, say once, kindly: "Take your time." Do not pressure them.
-
-TEST STRUCTURE — run in order, do not skip:
-1) GREETING (1 line): "Good day. My name is Alex and I'll be your examiner today. Could you please tell me your full name?"
-2) PART 1 — Introduction & Interview (about 4-5 minutes, 8-12 short questions):
-   - Start with: "And where are you from?" then "Do you work or are you a student?"
-   - Then cover 2-3 familiar topics (hobbies, daily routine, food, weather, hometown, family, travel, technology). 3-4 Qs per topic.
-   - Each question must be short and concrete. No abstract questions yet.
-3) PART 2 — Cue Card (3-4 minutes):
-   - Announce: "Now I'm going to give you a topic and I'd like you to talk about it for one to two minutes. You'll have one minute to prepare. Your topic is:"
-   - Then state ONE "Describe..." cue card with 3-4 "You should say:" bullets and an "and explain why..." line.
-   - Say: "You have one minute to prepare. I will tell you when to start." Then go silent.
-   - After roughly 60 seconds say: "Alright, please begin speaking. You have up to two minutes."
-   - While the candidate speaks for the long turn, DO NOT interrupt at all. Wait until they clearly finish or until ~2 minutes pass, then ask one short rounding-off question.
-4) PART 3 — Discussion (about 4-5 minutes, 5-7 abstract Qs linked to the Part 2 topic):
-   - Move from concrete to abstract: comparisons, reasons, society, future, opinions.
-   - One follow-up per answer when natural; otherwise move to the next question.
-5) CLOSING (1 line): "Thank you. That is the end of the speaking test."
-
-DO NOT
-- Do not say "you have not answered me" or any negative pressure.
-- Do not switch language.
-- Do not give the user the answer or model sentences.
-- Do not announce the part numbers out loud ("Now Part 1") — just transition naturally.
-- Do not produce long monologues. If your reply is more than 2 sentences, cut it short.
-
-TOPIC POOL (rotate, do NOT repeat the same topic in the same call): daily routine, hometown, food, weather, hobbies, music, sport, books, films, travel, technology, education, work, family, friends, shopping, festivals, environment, art, health.`;
-
-					// Persist for the whole call
-					const sessionUpdate = {
-						type: 'session.update',
-						session: {
-							instructions: ieltsInstructions,
-							modalities: ['audio', 'text'],
-							// ChatGPT-style real-time turn-taking. 600 ms of silence
-							// is enough to detect end of speech without cutting the
-							// candidate off mid-thought. interrupt_response lets the
-							// AI auto-stop the moment the candidate begins talking,
-							// so no manual interrupt button is needed.
-							turn_detection: {
-								type: 'server_vad',
-								threshold: 0.5,
-								prefix_padding_ms: 300,
-								silence_duration_ms: 600,
-								create_response: true,
-								interrupt_response: true,
-							},
-							// MUST stay on or the candidate's words never get
-							// transcribed and the final scorer gets an empty payload.
-							input_audio_transcription: { model: 'whisper-1' },
-						},
-					};
-
-					dataChannel.send(JSON.stringify(sessionUpdate));
-
-					// Kick off Part 1 with the standard examiner greeting.
-					const startPartOne = {
-						type: 'response.create',
-						response: {
-							instructions: 'Greet the candidate exactly as in your instructions (one short line) and then ask only for their full name. Do not ask anything else yet.',
-							modalities: ['audio', 'text'],
-						},
-					};
-
-					dataChannel.send(JSON.stringify(startPartOne));
-
-					hasSentSessionInstructions = true;
-					console.log('✅ Sent IELTS session instructions and started Part 1');
-				}
-			} catch (e) {
-				console.warn('⚠️ Failed to send session instructions:', e);
-			}
-      };
-      dataChannel.onclose = () => {
-        console.log('⚠️ Data channel closed');
-      };
-      dataChannel.onerror = (error) => {
-        console.error('❌ Data channel error:', error);
-      };
-      dataChannel.onmessage = (event) => {
-        try {
-          // Parse JSON event from OpenAI Realtime API.
-          const eventData = JSON.parse(event.data);
-          const t = eventData.type || '';
-
-          // Log every event type once with a short preview — invaluable when
-          // diagnosing "speech not detected" issues. Audio deltas are dropped
-          // from the log because they fire dozens of times per second.
-          if (t !== 'response.audio.delta' && t !== 'response.audio_transcript.delta') {
-            console.log('📨 Realtime event:', t);
-          }
-
-          // ── AI SPEECH ── OpenAI streams what the AI is speaking as audio transcript
-          //    deltas. We forward both deltas (so the UI can show the AI's words
-          //    live, like Whisper subtitles) and the final transcript when done.
-          if (t === 'response.audio_transcript.delta' && onAgentMessage) {
-            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
-            if (textDelta) onAgentMessage({ type: 'delta', text: textDelta });
-            return;
-          }
-          if (t === 'response.audio_transcript.done' && onAgentMessage) {
-            const finalText = typeof eventData.transcript === 'string' ? eventData.transcript : '';
-            onAgentMessage({ type: 'done', text: finalText });
-            return;
-          }
-
-          // ── AI TEXT-ONLY responses (when modality includes text without audio)
-          if (t === 'response.text.delta' && onAgentMessage) {
-            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
-            if (textDelta) onAgentMessage({ type: 'delta', text: textDelta });
-            return;
-          }
-          if (t === 'response.text.done' && onAgentMessage) {
-            const finalText = typeof eventData.text === 'string' ? eventData.text : '';
-            onAgentMessage({ type: 'done', text: finalText });
-            return;
-          }
-
-          // ── End-of-turn safety net: when the AI completes a full response,
-          //    flush whatever transcript we have so the UI commits the message
-          //    to the conversation history even if the .done event was missed.
-          if ((t === 'response.completed' || t === 'response.done') && onAgentMessage) {
-            onAgentMessage({ type: 'done', text: '' });
-            return;
-          }
-
-          // ── USER SPEECH ── Server VAD lifecycle + final transcription
-          if (t === 'input_audio_buffer.speech_started' && onTranscriptionUpdate) {
+      return;
+    }
+    if (t === 'conversation.item.created' && onTranscriptionUpdate) {
+      const item = eventData.item || {};
+      if (item.role === 'user' && Array.isArray(item.content)) {
+        for (const part of item.content) {
+          if (part && typeof part.transcript === 'string' && part.transcript.trim()) {
             onTranscriptionUpdate({
-              transcript: '',
-              isPartial: true,
-              isComplete: false,
-              eventType: t,
-              speechStarted: true,
-            });
-            return;
-          }
-          if (t === 'input_audio_buffer.speech_stopped' && onTranscriptionUpdate) {
-            onTranscriptionUpdate({
-              transcript: '',
-              isPartial: true,
-              isComplete: false,
-              eventType: t,
-              speechStopped: true,
-            });
-            return;
-          }
-          if (t === 'conversation.item.input_audio_transcription.delta' && onTranscriptionUpdate) {
-            const textDelta = typeof eventData.delta === 'string' ? eventData.delta : '';
-            if (textDelta) {
-              onTranscriptionUpdate({
-                transcript: textDelta,
-                isPartial: true,
-                isComplete: false,
-                eventType: t,
-                isDelta: true,
-              });
-            }
-            return;
-          }
-          if (t === 'conversation.item.input_audio_transcription.completed' && onTranscriptionUpdate) {
-            const transcript = typeof eventData.transcript === 'string' ? eventData.transcript : '';
-            onTranscriptionUpdate({
-              transcript,
+              transcript: part.transcript.trim(),
               isPartial: false,
               isComplete: true,
               eventType: t,
+              viaFallback: true,
             });
             return;
           }
-          if (t === 'conversation.item.input_audio_transcription.failed') {
-            console.warn('⚠️ Whisper failed to transcribe user audio:', eventData);
-            if (onTranscriptionUpdate) {
-              onTranscriptionUpdate({
-                transcript: '',
-                isPartial: false,
-                isComplete: true,
-                eventType: t,
-                failed: true,
-                error: eventData.error?.message || 'Transcription failed',
-              });
-            }
-            return;
-          }
-          // ── Fallback: some sessions deliver the user transcript only
-          //    through `conversation.item.created` (when the input item
-          //    is added to the conversation). Grab it from there too so
-          //    speech is never lost.
-          if (t === 'conversation.item.created' && onTranscriptionUpdate) {
-            const item = eventData.item || {};
-            if (item.role === 'user' && Array.isArray(item.content)) {
-              for (const part of item.content) {
-                if (
-                  part &&
-                  (part.type === 'input_audio' || part.type === 'audio') &&
-                  typeof part.transcript === 'string' &&
-                  part.transcript.trim()
-                ) {
-                  onTranscriptionUpdate({
-                    transcript: part.transcript.trim(),
-                    isPartial: false,
-                    isComplete: true,
-                    eventType: t,
-                    viaFallback: true,
-                  });
-                  return;
-                }
-              }
-            }
-          }
-          // Server VAD committed audio — log it so we can see Whisper at
-          // least received something even if transcription doesn't return.
-          if (t === 'input_audio_buffer.committed') {
-            console.log('🎤 Audio committed for transcription (item:', eventData.item_id, ')');
-            return;
-          }
+        }
+      }
+    }
+    if (t === 'input_audio_buffer.committed') {
+      console.log('🎤 User audio committed for transcription');
+      return;
+    }
 
-          // ── Custom structured events the model may emit (kept for backwards compat)
-          if (t === 'part.change' && onAgentMessage) {
-            onAgentMessage({ type: 'part', text: null, meta: { part: eventData.part } });
-            return;
-          }
-          if (t === 'question.asked' && onAgentMessage) {
-            onAgentMessage({ type: 'question', text: eventData.text, meta: { part: eventData.part } });
-            return;
-          }
-          if (t === 'feedback.inline' && onFeedback) {
-            onFeedback(eventData.feedback);
-            if (onAgentMessage) onAgentMessage({ type: 'feedback', text: null, meta: eventData.feedback });
-            return;
-          }
-          if (t === 'cuecard.card' && onAgentMessage) {
-            onAgentMessage({ type: 'question', text: eventData.topic, meta: { part: 2, bullets: eventData.bullets } });
-            return;
-          }
+    if (t === 'part.change' && onAgentMessage) {
+      onAgentMessage({ type: 'part', text: null, meta: { part: eventData.part } });
+      return;
+    }
+    if (t === 'question.asked' && onAgentMessage) {
+      onAgentMessage({ type: 'question', text: eventData.text, meta: { part: eventData.part } });
+      return;
+    }
+    if (t === 'feedback.inline' && onFeedback) {
+      onFeedback(eventData.feedback);
+      onAgentMessage?.({ type: 'feedback', text: null, meta: eventData.feedback });
+      return;
+    }
+    if (t === 'error') {
+      console.error('❌ Realtime API error:', eventData?.error || eventData);
+    }
+  };
 
-          // ── Server-side errors from the Realtime API
-          if (t === 'error') {
-            console.error('❌ Realtime API error event:', eventData?.error || eventData);
-            return;
-          }
-        } catch (parseError) {
-          console.log('📨 Realtime message (non-JSON):', event.data);
-        }
-      };
-      dataChannel.onerror = (error) => {
-        console.error('❌ Data channel error:', error);
-      };
+  const start = async ({
+    audioEl,
+    onConnected,
+    onError,
+    maxDurationMs,
+    onTranscriptionUpdate,
+    onAgentMessage,
+    onFeedback,
+    onAiSpeakingChange,
+  } = {}) => {
+    try {
+      if (!isSupported()) throw new Error('WebRTC not supported');
 
-      // 4) Attach remote audio track to element for AI voice playback
-      const remoteStream = new MediaStream();
-      pc.ontrack = (event) => {
-        console.log('🎵 Received remote audio track from AI');
-        console.log('📊 Track details:', {
-          kind: event.track.kind,
-          id: event.track.id,
-          enabled: event.track.enabled,
-          readyState: event.track.readyState,
-          streams: event.streams.length
-        });
-        
-        remoteStream.addTrack(event.track);
-        remoteAudioEl.srcObject = remoteStream;
-        
-        // Ensure audio plays automatically
-        remoteAudioEl.play().then(() => {
-          console.log('✅ AI audio started playing');
-        }).catch(error => {
-          console.warn('⚠️ Autoplay prevented, user interaction required:', error);
-          // Try to play on user interaction
-          document.addEventListener('click', () => {
-            remoteAudioEl.play().catch(e => console.error('❌ Failed to play audio:', e));
-          }, { once: true });
-        });
-      };
-      
-      // Handle connection state changes
-      pc.onconnectionstatechange = () => {
-        console.log('🔌 WebRTC connection state:', pc.connectionState);
-        if (pc.connectionState === 'connected') {
-          console.log('✅ WebRTC connected - AI can now hear and respond in real-time');
-        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-          console.error('❌ WebRTC connection failed or disconnected');
-        }
-      };
-      
-      // Handle ICE connection state
-      pc.oniceconnectionstatechange = () => {
-        console.log('🧊 ICE connection state:', pc.iceConnectionState);
-        if (pc.iceConnectionState === 'connected') {
-          console.log('✅ ICE connected - audio should be streaming now');
-        } else if (pc.iceConnectionState === 'failed') {
-          console.error('❌ ICE connection failed');
-        }
-      };
-      
-      // Handle ICE candidates
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.log('🧊 ICE candidate:', event.candidate.candidate.substring(0, 50) + '...');
-        } else {
-          console.log('✅ ICE gathering complete');
-        }
-      };
-      
-      // Handle ICE gathering state
-      pc.onicegatheringstatechange = () => {
-        console.log('🧊 ICE gathering state:', pc.iceGatheringState);
-      };
+      greetingSent = false;
+      sessionConfigured = false;
+      remoteAudioEl = audioEl || new Audio();
+      playRemoteAudio(remoteAudioEl);
 
-      // 5) Capture microphone and add tracks
-      console.log('🎤 Requesting microphone access for Realtime API...');
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 44100
-          } 
-        });
-        console.log('✅ Microphone access granted for Realtime API');
-        micStream.getTracks().forEach((track) => {
-          console.log('🎤 Adding microphone track:', {
-            id: track.id,
-            kind: track.kind,
-            enabled: track.enabled,
-            readyState: track.readyState
-          });
-          pc.addTrack(track, micStream);
-        });
-        
-        // Monitor track state
-        micStream.getTracks().forEach(track => {
-          track.onended = () => console.log('⚠️ Microphone track ended');
-          track.onmute = () => console.warn('⚠️ Microphone track muted');
-          track.onunmute = () => console.log('✅ Microphone track unmuted');
-        });
-      } catch (micError) {
-        console.error('❌ Microphone access failed for Realtime API:', micError);
-        // Clean up and re-throw
-        if (pc) {
-          pc.close();
-          pc = null;
+      const SERVER_URL = resolveServerUrl();
+      let resp;
+
+      for (const [label, url, opts] of [
+        ['token', `${SERVER_URL}/api/speaking/realtime/token`, { method: 'GET', headers: { 'Content-Type': 'application/json' } }],
+        ['voice', `${SERVER_URL}/api/voice/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }],
+        ['auth', `${SERVER_URL}/api/auth/realtime-token`, { method: 'GET' }],
+      ]) {
+        resp = await fetch(url, opts);
+        if (resp.ok) {
+          console.log(`✅ Realtime token from ${label}`);
+          break;
         }
-        throw new Error(`Microphone access denied: ${micError.message || micError.name}. Please grant microphone permission and try again.`);
+        console.log(`🔄 ${label} failed (${resp.status}), trying next…`);
       }
 
-      // 6) Create offer and wait for ICE gathering to complete for reliability
-      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
+      if (!resp?.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `Token fetch failed (${resp?.status})`);
+      }
+
+      const session = await resp.json();
+      const clientSecretValue = extractToken(session);
+      if (!clientSecretValue) throw new Error('No ephemeral token in server response');
+
+      console.log('✅ Ephemeral token received, model:', session.model);
+
+      pc = new RTCPeerConnection({ iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }] });
+
+      const eventCallbacks = { onTranscriptionUpdate, onAgentMessage, onFeedback, onAiSpeakingChange };
+
+      dataChannel = pc.createDataChannel('oai-events');
+      dataChannel.onopen = () => console.log('✅ Realtime data channel open');
+      dataChannel.onmessage = (event) => {
+        try {
+          handleRealtimeEvent(JSON.parse(event.data), eventCallbacks);
+        } catch {
+          console.log('📨 Realtime raw message:', event.data);
+        }
+      };
+
+      pc.ontrack = (event) => {
+        console.log('🎵 AI audio track received');
+        const stream = event.streams?.[0] || new MediaStream([event.track]);
+        remoteAudioEl.srcObject = stream;
+        playRemoteAudio(remoteAudioEl);
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log('🔌 WebRTC state:', pc.connectionState);
+      };
+
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
+      console.log('✅ Microphone attached');
+
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       await new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') return resolve();
-        const check = () => {
+        const done = () => {
           if (pc.iceGatheringState === 'complete') {
-            pc.removeEventListener('icegatheringstatechange', check);
+            pc.removeEventListener('icegatheringstatechange', done);
             resolve();
           }
         };
-        pc.addEventListener('icegatheringstatechange', check);
-        setTimeout(resolve, 1500); // fallback timeout
+        pc.addEventListener('icegatheringstatechange', done);
+        setTimeout(resolve, 2000);
       });
 
-      // 7) Send SDP to OpenAI Realtime API (unified WebRTC calls endpoint)
-      const realtimeEndpoint = 'https://api.openai.com/v1/realtime/calls';
-      
-      console.log('🔑 Using ephemeral token (first 20 chars):', clientSecretValue.substring(0, 20) + '...');
-      console.log('📋 SDP offer length:', pc.localDescription.sdp.length);
-      console.log('🔗 Connecting to OpenAI Realtime API:', realtimeEndpoint);
-      
-      const sdpResp = await fetch(realtimeEndpoint, {
+      const sdpResp = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${clientSecretValue}`,
-          'Content-Type': 'application/sdp'
+          'Content-Type': 'application/sdp',
         },
-        body: pc.localDescription.sdp
+        body: pc.localDescription.sdp,
       });
 
       if (!sdpResp.ok) {
-        const errorText = await sdpResp.text().catch(() => 'Unknown error');
-        console.error('❌ SDP exchange failed:', sdpResp.status, errorText);
-        console.error('📋 Response headers:', Object.fromEntries(sdpResp.headers.entries()));
-        throw new Error(`SDP exchange failed: ${sdpResp.status} - ${errorText}`);
+        const errText = await sdpResp.text().catch(() => '');
+        throw new Error(`SDP exchange failed (${sdpResp.status}): ${errText}`);
       }
-      
-      const answerSdp = await sdpResp.text();
-      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-      console.log('✅ SDP exchange succeeded');
-      
-      // Wait for connection to be established
+
+      await pc.setRemoteDescription({ type: 'answer', sdp: await sdpResp.text() });
+      console.log('✅ SDP exchange complete');
+
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          console.error('⏱️ Connection timeout - WebRTC did not connect within 10 seconds');
-          console.error('📊 Current connection state:', pc.connectionState);
-          console.error('📊 ICE connection state:', pc.iceConnectionState);
-          reject(new Error('Connection timeout - WebRTC did not connect within 10 seconds'));
-        }, 10000);
-        
-        const checkConnection = () => {
-          console.log('📊 Connection state changed:', pc.connectionState);
-          console.log('📊 ICE connection state:', pc.iceConnectionState);
-          
+        const timeout = setTimeout(() => reject(new Error('WebRTC connection timeout')), 15000);
+        const check = () => {
           if (pc.connectionState === 'connected') {
             clearTimeout(timeout);
-            pc.removeEventListener('connectionstatechange', checkConnection);
-            console.log('✅ WebRTC connection fully established');
-            console.log('📊 Final connection state:', pc.connectionState);
-            console.log('📊 Final ICE connection state:', pc.iceConnectionState);
+            pc.removeEventListener('connectionstatechange', check);
             resolve();
-          } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          } else if (pc.connectionState === 'failed') {
             clearTimeout(timeout);
-            pc.removeEventListener('connectionstatechange', checkConnection);
-            console.error('❌ WebRTC connection failed:', pc.connectionState);
-            console.error('📊 ICE connection state:', pc.iceConnectionState);
-            reject(new Error(`WebRTC connection failed: ${pc.connectionState}`));
+            reject(new Error('WebRTC connection failed'));
           }
         };
-        
-        // Log initial state
-        console.log('📊 Initial connection state:', pc.connectionState);
-        console.log('📊 Initial ICE connection state:', pc.iceConnectionState);
-        
         if (pc.connectionState === 'connected') {
           clearTimeout(timeout);
           resolve();
         } else {
-          pc.addEventListener('connectionstatechange', checkConnection);
+          pc.addEventListener('connectionstatechange', check);
         }
       });
 
-      // Verify audio tracks are active
-      console.log('📊 Checking audio tracks...');
-      const senders = pc.getSenders();
-      const receivers = pc.getReceivers();
-      
-      console.log('📤 Audio senders (microphone):', senders.length);
-      senders.forEach((sender, i) => {
-        if (sender.track) {
-          console.log(`  Sender ${i}:`, {
-            kind: sender.track.kind,
-            enabled: sender.track.enabled,
-            readyState: sender.track.readyState,
-            muted: sender.track.muted
-          });
+      // Fallback: if session.created event was missed, greet after connect
+      setTimeout(() => {
+        if (!greetingSent) {
+          console.log('⏰ Greeting fallback — sending response.create');
+          sendGreeting();
         }
-      });
-      
-      console.log('📥 Audio receivers (AI voice):', receivers.length);
-      receivers.forEach((receiver, i) => {
-        if (receiver.track) {
-          console.log(`  Receiver ${i}:`, {
-            kind: receiver.track.kind,
-            enabled: receiver.track.enabled,
-            readyState: receiver.track.readyState,
-            muted: receiver.track.muted
-          });
-        }
-      });
-      
-      // Set up periodic health check
-      const healthCheck = setInterval(() => {
-        console.log('🏥 Connection health check:', {
-          connectionState: pc.connectionState,
-          iceConnectionState: pc.iceConnectionState,
-          senders: pc.getSenders().length,
-          receivers: pc.getReceivers().length,
-          hasRemoteStream: remoteAudioEl.srcObject !== null
-        });
-      }, 5000);
-      
-      // Store health check interval for cleanup
-      if (!sessionTimer) sessionTimer = { healthCheck };
-      else sessionTimer.healthCheck = healthCheck;
+      }, 2500);
 
-      onConnected && onConnected();
+      onConnected?.();
 
-      // Optional max session duration (e.g., 2 minutes)
       if (maxDurationMs && typeof maxDurationMs === 'number') {
-        if (!sessionTimer.timeout) {
-          sessionTimer.timeout = setTimeout(() => {
-            stop();
-          }, maxDurationMs);
-        }
+        sessionTimer = setTimeout(() => stop(), maxDurationMs);
       }
     } catch (e) {
-      onError && onError(e);
+      onError?.(e);
       throw e;
     }
-	};
+  };
 
   const stop = async () => {
     try {
-      // Clear all timers
       if (sessionTimer) {
-        if (sessionTimer.timeout) clearTimeout(sessionTimer.timeout);
-        if (sessionTimer.healthCheck) clearInterval(sessionTimer.healthCheck);
+        clearTimeout(sessionTimer);
         sessionTimer = null;
       }
-      
-      if (pc) {
-        // Stop all tracks
-        pc.getSenders().forEach((sender) => {
-          try { 
-            if (sender.track) {
-              sender.track.stop();
-              console.log('🛑 Stopped sender track:', sender.track.id);
-            }
-          } catch (e) {
-            console.warn('⚠️ Error stopping sender track:', e);
-          }
-        });
-        
-        // Close peer connection
-        pc.close();
-        console.log('🛑 Closed peer connection');
-      }
-      
-      if (micStream) {
-        micStream.getTracks().forEach((t) => {
-          t.stop();
-          console.log('🛑 Stopped microphone track:', t.id);
-        });
-      }
+      pc?.getSenders().forEach((s) => { try { s.track?.stop(); } catch {} });
+      pc?.close();
+      micStream?.getTracks().forEach((t) => t.stop());
     } finally {
       pc = null;
       micStream = null;
+      dataChannel = null;
+      greetingSent = false;
+      sessionConfigured = false;
       if (remoteAudioEl) {
-        try { 
-          remoteAudioEl.srcObject = null;
+        try {
           remoteAudioEl.pause();
-          console.log('🛑 Stopped remote audio');
-        } catch (e) {
-          console.warn('⚠️ Error stopping remote audio:', e);
-        }
+          remoteAudioEl.srcObject = null;
+        } catch {}
       }
     }
   };
 
-	// Optional: request a fresh Part 2 cue card on demand
-	const requestCueCard = () => {
-		if (!dataChannel || dataChannel.readyState !== 'open') {
-			throw new Error('Data channel is not open');
-		}
-		const cueReq = {
-			type: 'response.create',
-			response: {
-				instructions: 'Generate an IELTS Part 2 cue card with a random topic and 3-4 bullet prompts.',
-				modalities: ['audio', 'text']
-			}
-		};
-		dataChannel.send(JSON.stringify(cueReq));
-	};
+  const requestCueCard = () => {
+    if (!dataChannel || dataChannel.readyState !== 'open') throw new Error('Not connected');
+    dataChannel.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        output_modalities: ['audio'],
+        instructions: 'Give an IELTS Part 2 cue card with a Describe topic and 3 bullet prompts. Speak it out loud.',
+      },
+    }));
+  };
 
-	// Mute/unmute the local microphone track so the user can stop transmitting
-	// audio (e.g. while thinking). Server-side VAD will treat this as silence.
-	const setMuted = (muted) => {
-		if (!micStream) return;
-		micStream.getAudioTracks().forEach((track) => {
-			track.enabled = !muted;
-		});
-	};
+  const setMuted = (muted) => {
+    micStream?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+  };
 
-	// Interrupt the AI mid-response (e.g. if it's rambling). Tells the server
-	// to cancel the in-flight response so the user can speak again right away.
-	const interrupt = () => {
-		try {
-			if (dataChannel && dataChannel.readyState === 'open') {
-				dataChannel.send(JSON.stringify({ type: 'response.cancel' }));
-			}
-			// Also stop any currently playing remote audio immediately
-			if (remoteAudioEl) {
-				try {
-					remoteAudioEl.pause();
-					remoteAudioEl.currentTime = 0;
-				} catch {}
-			}
-		} catch (e) {
-			console.warn('⚠️ Failed to interrupt realtime response:', e);
-		}
-	};
+  const interrupt = () => {
+    if (dataChannel?.readyState === 'open') {
+      dataChannel.send(JSON.stringify({ type: 'response.cancel' }));
+      dataChannel.send(JSON.stringify({ type: 'output_audio_buffer.clear' }));
+    }
+    if (remoteAudioEl) {
+      try { remoteAudioEl.pause(); remoteAudioEl.currentTime = 0; } catch {}
+    }
+  };
 
-	// Expose the local mic stream so the UI can attach a WebAudio analyser
-	// to it (volume meter, voice-activity indicator, etc).
-	const getMicStream = () => micStream;
-
-	// Expose the remote audio element so the UI can read .paused / .ended
-	// for reliable "AI speaking" status.
-	const getRemoteAudioEl = () => remoteAudioEl;
-
-	return {
-		start,
-		stop,
-		isSupported,
-		requestCueCard,
-		setMuted,
-		interrupt,
-		getMicStream,
-		getRemoteAudioEl,
-	};
+  return {
+    start,
+    stop,
+    isSupported,
+    requestCueCard,
+    setMuted,
+    interrupt,
+    getMicStream: () => micStream,
+    getRemoteAudioEl: () => remoteAudioEl,
+  };
 }
-
-
