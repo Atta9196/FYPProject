@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, us
 import { io } from 'socket.io-client';
 import { createRealtimeAgent } from '../realtime/useRealtimeOpenAI';
 
-export const VoiceConversation = forwardRef(function VoiceConversation(_props, ref) {
+export const VoiceConversation = forwardRef(function VoiceConversation({ onEndSession }, ref) {
     const [isConnected, setIsConnected] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [isListening, setIsListening] = useState(false);
@@ -1412,8 +1412,26 @@ export const VoiceConversation = forwardRef(function VoiceConversation(_props, r
         setIsEnding(true);
         setStatusBanner('Ending session…');
 
-        userSpeakingDurationRef.current = 0;
-        userSpeechStartedAtRef.current = null;
+        if (userSpeechStartedAtRef.current) {
+            const segSec = Math.max(0, (Date.now() - userSpeechStartedAtRef.current) / 1000);
+            userSpeakingDurationRef.current = (userSpeakingDurationRef.current || 0) + segSec;
+            userSpeechStartedAtRef.current = null;
+        }
+
+        const endedSessionId = sessionId;
+        const historySnapshot = [...conversationHistory];
+
+        try {
+            if (realtimeRef.current?.interrupt) realtimeRef.current.interrupt();
+        } catch {}
+
+        setStatusBanner('Preparing your band report…');
+        let backupResult = { transcript: null, durationSec: 0 };
+        try {
+            backupResult = await stopBackupAndTranscribe();
+        } catch (e) {
+            console.warn('Backup transcribe failed:', e);
+        }
 
         hardStopSession();
 
@@ -1426,9 +1444,46 @@ export const VoiceConversation = forwardRef(function VoiceConversation(_props, r
         setIsMuted(false);
         setVolumeLevel(0);
         setRealtimeTranscript('');
-        setCurrentMessage('');
         setStatusBanner('');
         setSessionEnded(true);
+
+        const vadDurationSec = Number(userSpeakingDurationRef.current || 0);
+        userSpeakingDurationRef.current = 0;
+
+        let finalHistory = historySnapshot;
+        const hasRealtimeUserMessages = historySnapshot.some(
+            (m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0
+        );
+        const backupText = (backupResult.transcript || '').trim();
+        if (!hasRealtimeUserMessages && backupText) {
+            finalHistory = [
+                ...historySnapshot,
+                {
+                    role: 'user',
+                    content: backupText,
+                    timestamp: new Date(),
+                    source: 'backup-transcription',
+                },
+            ];
+        }
+
+        const totalUserSpeakingSec = Math.max(
+            vadDurationSec,
+            hasRealtimeUserMessages ? 0 : backupResult.durationSec
+        );
+
+        if (typeof onEndSession === 'function') {
+            try {
+                await onEndSession({
+                    sessionId: endedSessionId,
+                    conversationHistory: finalHistory,
+                    userSpeakingDurationSec: totalUserSpeakingSec,
+                });
+            } catch (err) {
+                console.warn('onEndSession handler failed:', err);
+            }
+        }
+
         setIsEnding(false);
     };
 
@@ -1581,7 +1636,7 @@ export const VoiceConversation = forwardRef(function VoiceConversation(_props, r
                                 disabled={isEnding}
                                 className="rounded-xl bg-rose-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60 transition-colors"
                             >
-                                {isEnding ? 'Ending…' : 'End session'}
+                                {isEnding ? 'Ending…' : 'End session & get report'}
                             </button>
                         </div>
                     </>
